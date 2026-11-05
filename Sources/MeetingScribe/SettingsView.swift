@@ -1,0 +1,240 @@
+import AVFoundation
+import CoreAudio
+import MeetingScribeCore
+import SwiftUI
+
+struct SettingsView: View {
+    @EnvironmentObject var state: AppState
+    var body: some View {
+        TabView {
+            GeneralSettings().tabItem { Label("General", systemImage: "gearshape") }
+            DictationSettings().tabItem { Label("Dictation", systemImage: "keyboard") }
+            VoiceSettings().tabItem { Label("Voices", systemImage: "person.wave.2") }
+            ModelSettings().tabItem { Label("Models", systemImage: "cpu") }
+        }
+        .environmentObject(state)
+        .frame(width: 560, height: 470)
+    }
+}
+
+struct GeneralSettings: View {
+    @EnvironmentObject var state: AppState
+    var body: some View {
+        Form {
+            TextField("Your name", text: $state.prefs.myName, prompt: Text("Me"))
+            Picker("Default meeting type", selection: $state.prefs.defaultMode) {
+                ForEach(MeetingMode.allCases) { Text($0.title).tag($0) }
+            }
+            Toggle("Show live transcript while recording", isOn: $state.prefs.liveTranscription)
+            Toggle("Create full transcript automatically after recording", isOn: $state.prefs.autoTranscribe)
+            Picker("Transcription engine", selection: $state.prefs.engine) {
+                ForEach(ASREngineKind.allCases) { Text($0.title).tag($0) }
+            }
+            Picker("Language", selection: $state.prefs.language) {
+                ForEach(TranscriptLanguage.allCases) { Text($0.title).tag($0) }
+            }
+            Text("“Automatic” handles meetings that switch between German and English.")
+                .font(.caption).foregroundStyle(.secondary)
+            LabeledContent("Recordings folder") {
+                Button("Show in Finder") { NSWorkspace.shared.open(AppPaths.sessions) }
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+struct DictationSettings: View {
+    @EnvironmentObject var state: AppState
+    var body: some View {
+        DictationSettingsForm(dictation: state.dictation)
+    }
+}
+
+private struct DictationSettingsForm: View {
+    @EnvironmentObject var state: AppState
+    @ObservedObject var dictation: DictationController
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Push-to-talk dictation", isOn: $state.prefs.dictationEnabled)
+                LabeledContent("Shortcut") {
+                    ShortcutRecorder(hotKey: $state.prefs.dictationHotKey,
+                                     onRecordingChange: { state.suspendDictationShortcut($0) })
+                }
+                .disabled(!state.prefs.dictationEnabled)
+                if let e = state.hotKeyError { Text(e).font(.caption).foregroundStyle(.red) }
+                Text("Hold the shortcut in any app and speak. When you let go, the text is transcribed on this Mac, copied to the clipboard and pasted where your cursor is.")
+                    .font(.callout).foregroundStyle(.secondary)
+                Text("Use a key combination (e.g. ⌃⌥Space) or press and release modifier keys only, such as right ⌥ or fn + left ⌃. With modifier-only shortcuts, pressing any other key while holding them cancels the dictation, so normal shortcuts keep working.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("Permission") {
+                LabeledContent("Accessibility") {
+                    if dictation.isTrusted {
+                        Label("Allowed", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                    } else {
+                        Button("Allow…") {
+                            dictation.requestAccessibility()
+                            dictation.watchTrust { state.applyDictationShortcut() }
+                        }
+                    }
+                }
+                Text("Needed to paste into other apps and to detect modifier-only shortcuts like fn + ⌃. Without it, the text is only copied to the clipboard.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section {
+                Text("Uses Parakeet Ultra, which detects German, English and 23 other languages automatically. The microphone is the one chosen for recordings.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+/// Collects 16 kHz samples from the microphone for voice enrollment.
+@MainActor
+final class EnrollmentRecorder: ObservableObject {
+    @Published var seconds: Double = 0
+    @Published var isRecording = false
+    @Published var level: Float = 0
+    private let mic = MicCapture()
+    private var buffer = SampleBuffer()
+    private var timer: Timer?
+
+    func start(deviceID: AudioObjectID?) throws {
+        let buf = SampleBuffer()
+        buffer = buf
+        let resampler = Resampler16k()
+        try mic.start(deviceID: deviceID) { pcm, _ in buf.append(resampler.convert(pcm)) }
+        isRecording = true
+        timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                let (n, tail) = buf.stats()
+                self.seconds = Double(n) / 16_000
+                self.level = AudioIO.rms(tail[...])
+            }
+        }
+    }
+
+    func stop() -> [Float] {
+        mic.stop(); timer?.invalidate(); isRecording = false
+        return buffer.all()
+    }
+}
+
+struct VoiceSettings: View {
+    @EnvironmentObject var state: AppState
+    @StateObject private var rec = EnrollmentRecorder()
+    @State private var voiceprint = VoiceprintStore.load()
+    @State private var library = SpeakerLibrary.load()
+    @State private var busy = false
+    @State private var message: String?
+
+    private let readingText = """
+    Bitte lies diesen Text in normaler Lautstärke vor: Heute bespreche ich mit dem Team die nächsten Schritte im Projekt. \
+    Wir schauen uns die Zahlen an, klären offene Fragen und verteilen die Aufgaben für die kommende Woche. \
+    Then continue in English: we review the timeline, agree on priorities and write down the action items.
+    """
+
+    var body: some View {
+        Form {
+            Section("Your voice") {
+                Text("For in-person meetings MeetingScribe recognises you by your voice. Record about 20 seconds once.")
+                    .font(.callout).foregroundStyle(.secondary)
+                if let v = voiceprint {
+                    LabeledContent("Voice sample") {
+                        HStack {
+                            Text(String(format: "%.0f s recorded %@", v.seconds, v.createdAt.formatted(date: .abbreviated, time: .omitted)))
+                            Button("Delete") { VoiceprintStore.delete(); voiceprint = nil }
+                        }
+                    }
+                }
+                if rec.isRecording {
+                    Text(readingText).font(.callout).padding(8).background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+                    LevelMeter(label: String(format: "%.0f s", rec.seconds), icon: "mic", level: rec.level)
+                    Button(rec.seconds < 15 ? "Keep reading… (\(Int(15 - rec.seconds)) s)" : "Finish") { finish() }
+                        .disabled(rec.seconds < 15)
+                } else {
+                    Button(voiceprint == nil ? "Record Voice Sample" : "Record Again") { start() }
+                        .disabled(busy)
+                }
+                if busy { ProgressView().controlSize(.small) }
+                if let message { Text(message).font(.callout).foregroundStyle(.secondary) }
+            }
+            Section("Remembered voices") {
+                if library.entries.isEmpty {
+                    Text("When you rename a speaker in a transcript, MeetingScribe remembers the voice and names that person automatically next time.")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+                ForEach(library.entries, id: \.name) { e in
+                    HStack {
+                        Text(e.name)
+                        Text("from \(e.count) meeting\(e.count == 1 ? "" : "s")").foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Forget") { library.forget(name: e.name); try? library.save() }
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private func start() {
+        message = nil
+        Task {
+            guard await Permissions.requestMicrophone() else { message = "Microphone access is needed."; return }
+            do { try rec.start(deviceID: state.selectedDeviceID) } catch { message = error.localizedDescription }
+        }
+    }
+
+    private func finish() {
+        let samples = rec.stop()
+        busy = true
+        let name = state.prefs.myName
+        Task {
+            do {
+                let v = try await VoiceprintStore.enroll(name: name, samples: samples)
+                voiceprint = v
+                message = "Saved. You will be labelled “\(name)” in in-person meetings."
+            } catch {
+                message = error.localizedDescription
+            }
+            busy = false
+        }
+    }
+}
+
+struct ModelSettings: View {
+    @EnvironmentObject var state: AppState
+    var body: some View {
+        Form {
+            Section("Models (all run locally)") {
+                LabeledContent("Transcription", value: "Parakeet Ultra (NVIDIA, Core ML) · Qwen3-ASR 1.7B (MLX, optional)")
+                LabeledContent("Speakers", value: "NVIDIA Nemotron 3 Diarization (Core ML)")
+                LabeledContent("Voice matching", value: "CAM++ speaker embeddings")
+                LabeledContent("Speech detection", value: "Silero VAD")
+            }
+            Section {
+                if let p = state.modelSetup {
+                    ProgressView(value: p.fraction) { Text(p.message) }
+                } else {
+                    Button(state.modelsReady ? "Check / Re-download Models" : "Download Models") { state.prepareModels() }
+                }
+                Text("Models are downloaded once from Hugging Face and cached. Audio and transcripts never leave this Mac.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+/// Thread-safe sample accumulator written from the audio thread.
+final class SampleBuffer: @unchecked Sendable {
+    private var samples: [Float] = []
+    private let lock = NSLock()
+    func append(_ s: [Float]) { lock.lock(); samples += s; lock.unlock() }
+    func stats() -> (Int, [Float]) { lock.lock(); defer { lock.unlock() }; return (samples.count, Array(samples.suffix(1600))) }
+    func all() -> [Float] { lock.lock(); defer { lock.unlock() }; return samples }
+}
