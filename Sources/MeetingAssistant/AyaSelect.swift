@@ -55,7 +55,7 @@ struct AyaSelect<T: Hashable>: View {
         let rect = window.convertToScreen(view.convert(view.bounds, to: nil))
         let items = options.enumerated().map { (index: $0.offset, title: $0.element.title) }
         open = true
-        AyaPopup.show(below: rect, parent: window, count: items.count,
+        AyaPopup.show(below: rect, parent: window, count: items.count, searchable: items.count > AyaPopup.searchFrom,
                       content: AyaSelectList(items: items, selected: current) { i in
                           selection = options[i].value
                           AyaPopup.close()
@@ -81,25 +81,55 @@ private struct AyaSelectList: View {
     let pick: (Int) -> Void
 
     @State private var highlighted: Int?
+    @State private var query = ""
     @FocusState private var focused: Bool
 
+    /// Long lists filter as you type (the list keeps keyboard focus, so arrows and Return still work).
+    private var searchable: Bool { items.count > AyaPopup.searchFrom }
+
+    private var shown: [(index: Int, title: String)] {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return items }
+        return items.filter { $0.title.range(of: q, options: [.caseInsensitive, .diacriticInsensitive]) != nil }
+    }
+
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                VStack(spacing: 0) {
-                    ForEach(items, id: \.index) { item in
-                        row(item).id(item.index)
-                    }
+        VStack(spacing: 0) {
+            if searchable {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(Aya.textSubtle)
+                    Text(query.isEmpty ? "Type to search" : query)
+                        .foregroundStyle(query.isEmpty ? Aya.textSubtle : Aya.text)
+                    Spacer()
+                    if !query.isEmpty { Text("\(shown.count)").foregroundStyle(Aya.textSubtle) }
                 }
-                .padding(4)
+                .font(.system(size: 12))
+                .padding(.horizontal, 12)
+                .frame(height: AyaPopup.searchHeight)
+                Divider().overlay(Aya.border)
             }
-            .scrollIndicators(.automatic)
-            .onAppear {
-                highlighted = selected ?? items.first?.index
-                if let selected { proxy.scrollTo(selected, anchor: .center) }
-                focused = true
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(shown, id: \.index) { item in
+                            row(item).id(item.index)
+                        }
+                        if shown.isEmpty {
+                            Text("No match").font(.system(size: 12)).foregroundStyle(Aya.textSubtle)
+                                .frame(maxWidth: .infinity, minHeight: AyaPopup.rowHeight)
+                        }
+                    }
+                    .padding(4)
+                }
+                .scrollIndicators(.automatic)
+                .onAppear {
+                    highlighted = selected ?? items.first?.index
+                    if let selected { proxy.scrollTo(selected, anchor: .center) }
+                    focused = true
+                }
+                .onChange(of: highlighted) { _, h in if let h { proxy.scrollTo(h) } }
+                .onChange(of: query) { _, _ in highlighted = shown.first?.index }
             }
-            .onChange(of: highlighted) { _, h in if let h { proxy.scrollTo(h) } }
         }
         .background(Aya.popover, in: RoundedRectangle(cornerRadius: Aya.radiusControl, style: .continuous))
         .clipShape(RoundedRectangle(cornerRadius: Aya.radiusControl, style: .continuous))
@@ -110,9 +140,21 @@ private struct AyaSelectList: View {
         .onKeyPress(.downArrow) { move(1); return .handled }
         .onKeyPress(.upArrow) { move(-1); return .handled }
         .onKeyPress(.return) { if let h = highlighted { pick(h) }; return .handled }
-        .onKeyPress(.space) { if let h = highlighted { pick(h) }; return .handled }
+        .onKeyPress(.space) {
+            if searchable && !query.isEmpty { query.append(" "); return .handled }
+            if let h = highlighted { pick(h) }
+            return .handled
+        }
         .onKeyPress(.escape) { AyaPopup.close(); return .handled }
-        .onKeyPress(phases: .down) { press in
+        .onKeyPress(phases: [.down, .repeat]) { press in
+            if searchable {
+                if press.key == .delete { if !query.isEmpty { query.removeLast() }; return .handled }
+                guard !press.modifiers.contains(.command), let c = press.characters.first,
+                      c.isLetter || c.isNumber || c.isPunctuation || c == " " || c.isSymbol else { return .ignored }
+                if c == " " && query.isEmpty { return .ignored }   // Space picks while nothing is typed
+                query.append(c)
+                return .handled
+            }
             // Type-ahead: jump to the first item starting with the typed letter.
             guard let c = press.characters.first, c.isLetter || c.isNumber else { return .ignored }
             let s = String(c).lowercased()
@@ -142,9 +184,10 @@ private struct AyaSelectList: View {
     }
 
     private func move(_ d: Int) {
-        guard !items.isEmpty else { return }
-        let pos = items.firstIndex { $0.index == highlighted } ?? (d > 0 ? -1 : items.count)
-        highlighted = items[max(0, min(items.count - 1, pos + d))].index
+        let list = shown
+        guard !list.isEmpty else { return }
+        let pos = list.firstIndex { $0.index == highlighted } ?? (d > 0 ? -1 : list.count)
+        highlighted = list[max(0, min(list.count - 1, pos + d))].index
     }
 }
 
@@ -159,15 +202,19 @@ private final class AyaPopupPanel: NSPanel {
 @MainActor enum AyaPopup {
     static let rowHeight: CGFloat = 28
     static let maxHeight: CGFloat = 320
+    static let searchHeight: CGFloat = 32
+    /// Lists longer than this get type-to-search.
+    static let searchFrom = 12
     static private(set) var lastClose = Date.distantPast
     private static var panel: AyaPopupPanel?
     private static var onClose: (() -> Void)?
     private static var observer: NSObjectProtocol?
 
-    static func show<V: View>(below trigger: NSRect, parent: NSWindow, count: Int, content: V, onClose: @escaping () -> Void) {
+    static func show<V: View>(below trigger: NSRect, parent: NSWindow, count: Int, searchable: Bool = false,
+                              content: V, onClose: @escaping () -> Void) {
         close()
         let width = max(trigger.width, 180)
-        let height = min(CGFloat(max(count, 1)) * rowHeight + 8, maxHeight)
+        let height = min(CGFloat(max(count, 1)) * rowHeight + 8, maxHeight) + (searchable ? searchHeight + 1 : 0)
         let screen = (parent.screen ?? NSScreen.main)?.visibleFrame ?? .infinite
         var y = trigger.minY - 4 - height
         if y < screen.minY, trigger.maxY + 4 + height <= screen.maxY { y = trigger.maxY + 4 }

@@ -56,7 +56,7 @@ func runAya(_ args: [String]) -> Never {
             for s in try await ayaService().client.recordSpecs(workspace: ws) { print("\(s.techName)  \(s.label)  home=\(s.workspaceId ?? "-")") }
         case "schema":
             guard let slot = rest.first.flatMap(AyaSlot.init(rawValue:)), let s = AyaCache.schema(slot) else {
-                throw AyaError.badRequest("usage: msctl aya schema clients|contacts|playbooks|recaps (after setup)")
+                throw AyaError.badRequest("usage: msctl aya schema \(AyaSlot.allCases.map(\.rawValue).joined(separator: "|")) (after setup)")
             }
             for f in s.fields {
                 let opts = f.options.isEmpty ? "" : "  options: \(f.options.prefix(8).joined(separator: ", "))\(f.options.count > 8 ? " …" : "")"
@@ -70,18 +70,27 @@ func runAya(_ args: [String]) -> Never {
         case "search":
             guard rest.count >= 2, let slot = AyaSlot(rawValue: rest[0]) else { throw AyaError.badRequest("usage: msctl aya search <slot> <text>") }
             for x in try await ayaService().search(slot, text: rest.dropFirst().joined(separator: " ")) { print("\(x.id)  \(x.title)") }
+        case "upcoming":
+            let svc = try ayaService()
+            let df = DateFormatter(); df.dateFormat = "EEE dd.MM. HH:mm"
+            for m in try await svc.upcomingMeetings(days: Int(rest.first ?? "14") ?? 14) {
+                let links = [svc.config.meetingClientField, svc.config.meetingProjectField, svc.config.meetingTemplateField]
+                    .compactMap { $0.flatMap { m.linkedTitle($0) } }.joined(separator: " · ")
+                print("\(m.id)  \(m.date(svc.config.meetingDateField).map(df.string) ?? "?")  \(m.title)\(links.isEmpty ? "" : "  [\(links)]")")
+            }
         case "context":
-            // msctl aya context <clientId> [playbookId]
-            guard let cid = rest.first else { throw AyaError.badRequest("usage: msctl aya context <clientId> [playbookId]") }
-            let ctx = try await ayaService().meetingContext(clientID: cid, playbookID: rest.dropFirst().first)
+            // msctl aya context [--meeting id] [--client id] [--project id] [--template id]
+            let ctx = try await ayaService().meetingContext(meetingID: option(rest, "--meeting"), clientID: option(rest, "--client"),
+                                                            projectID: option(rest, "--project"), templateID: option(rest, "--template"))
             let rendered = AssistPrompts.contextMessage(AssistContext(aya: ctx, config: AyaConfig.load(), goal: "", mode: .call,
                                                                       myName: "Me", date: Date()))
             print(rendered)
         default:
             print("""
             usage: msctl aya setup <orgId> | config | workspaces | specs <ws> | schema <slot>
-                   msctl aya list <slot> | search <slot> <text> | context <clientId> [playbookId]
-            slots: clients contacts playbooks recaps · API key from $AYA_API_KEY or the Keychain
+                   msctl aya list <slot> | search <slot> <text> | upcoming [days]
+                   msctl aya context [--meeting id] [--client id] [--project id] [--template id]
+            slots: \(AyaSlot.allCases.map(\.rawValue).joined(separator: " ")) · API key from $AYA_API_KEY or the Keychain
             """)
         }
     }

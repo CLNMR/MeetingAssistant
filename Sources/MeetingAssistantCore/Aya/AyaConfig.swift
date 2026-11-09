@@ -1,24 +1,28 @@
 import Foundation
 import Security
 
-/// The four Aya lists MeetingAssistant works with.
+/// The Aya lists MeetingAssistant works with.
 public enum AyaSlot: String, Codable, CaseIterable, Identifiable, Sendable {
-    case clients, contacts, playbooks, recaps
+    case clients, contacts, projects, templates, meetings, members
     public var id: String { rawValue }
     public var title: String {
         switch self {
         case .clients: return "Clients"
         case .contacts: return "Contacts"
-        case .playbooks: return "Playbooks"
-        case .recaps: return "Meeting recaps"
+        case .projects: return "Projects"
+        case .templates: return "Meeting templates"
+        case .meetings: return "Meetings"
+        case .members: return "Team members"
         }
     }
     public var explanation: String {
         switch self {
         case .clients: return "Companies you meet with (your CRM)."
         case .contacts: return "People at those companies; used to recognise attendees."
-        case .playbooks: return "How a kind of meeting should go; becomes the checklist."
-        case .recaps: return "Where a recap is created after each meeting."
+        case .projects: return "Projects a meeting can belong to."
+        case .templates: return "Agenda and questions; they become the meeting's checklist."
+        case .meetings: return "Planned meetings, and where the recap is saved."
+        case .members: return "Your team; internal attendees are linked as participants."
         }
     }
     /// Default list (techName), used when connecting for the first time.
@@ -26,10 +30,14 @@ public enum AyaSlot: String, Codable, CaseIterable, Identifiable, Sendable {
         switch self {
         case .clients: return "firma"
         case .contacts: return "kontakt"
-        case .playbooks: return "wikiPlaybooks"
-        case .recaps: return "pmMeetings"
+        case .projects: return "pmProjects"
+        case .templates: return "pmMeetingTemplates"
+        case .meetings: return "pmMeetings"
+        case .members: return "members"
         }
     }
+    /// Lists Assist cannot work without. Projects and members are used when they exist.
+    public var isRequired: Bool { self == .clients || self == .contacts || self == .templates || self == .meetings }
 }
 
 public struct AyaListRef: Codable, Hashable, Sendable {
@@ -43,43 +51,65 @@ public struct AyaListRef: Codable, Hashable, Sendable {
 }
 
 /// Settings for the Aya connection. The API key is kept in the Keychain, not here.
+/// Field names are record keys (`<techName>__<valueKey>`); a field that does not exist in the
+/// list is simply not used.
 public struct AyaConfig: Codable, Equatable, Sendable {
     public var orgId = ""
     public var lists: [String: AyaListRef] = [:]          // AyaSlot.rawValue → list
 
-    // Link fields (record keys of relation fields).
+    /// Contact → client link.
     public var contactsClientField: String? = "firma__id"
-    public var recapClientField: String? = nil
-    public var recapContactsField: String? = nil
 
-    // Field roles. Only used if the field exists in the list.
-    public var recapTitleField = "title__value"
-    public var recapDateField = "meeting_date__value"
-    public var recapAttendeesField = "external_participants__value"
-    public var recapExternalIdField = "external_meeting_id__value"
-    public var playbookGoalField = "goal__value"
-    public var playbookStepsField = "steps__value"
+    // Meeting links (nil = not linked).
+    public var meetingClientField: String? = "customer__id"
+    public var meetingProjectField: String? = "project__id"
+    public var meetingTemplateField: String? = "load_template__id"
+    public var meetingParticipantsField: String? = "participants__ids"
+
+    // Meeting fields the app fills in itself.
+    public var meetingTitleField = "title__value"
+    public var meetingDateField = "meeting_date__value"
+    public var meetingTypeField = "meeting_type__value"
+    public var meetingExternalIdField = "external_meeting_id__value"
+
+    // Template fields.
+    public var templateAgendaField = "agenda__value"
+    public var templateGoalField = "description__value"
+    public var templateTypeField = "meeting_type__value"
 
     public init() {}
 
     public func list(_ slot: AyaSlot) -> AyaListRef? { lists[slot.rawValue] }
     public mutating func setList(_ slot: AyaSlot, _ ref: AyaListRef?) { lists[slot.rawValue] = ref }
-    public var isComplete: Bool { !orgId.isEmpty && AyaSlot.allCases.allSatisfy { list($0) != nil } }
+    public var isComplete: Bool { !orgId.isEmpty && AyaSlot.allCases.filter(\.isRequired).allSatisfy { list($0) != nil } }
+
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case orgId, lists, contactsClientField
+        case meetingClientField, meetingProjectField, meetingTemplateField, meetingParticipantsField
+        case meetingTitleField, meetingDateField, meetingTypeField, meetingExternalIdField
+        case templateAgendaField, templateGoalField, templateTypeField
+    }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = AyaConfig()
-        orgId = (try? c.decode(String.self, forKey: .orgId)) ?? d.orgId
+        func str(_ k: CodingKeys, _ def: String) -> String { (try? c.decode(String.self, forKey: k)) ?? def }
+        // A missing key means "default"; an explicit null means "not linked".
+        func link(_ k: CodingKeys, _ def: String?) -> String? { c.contains(k) ? ((try? c.decodeIfPresent(String.self, forKey: k)) ?? nil) : def }
+        orgId = str(.orgId, d.orgId)
         lists = (try? c.decode([String: AyaListRef].self, forKey: .lists)) ?? d.lists
-        contactsClientField = c.contains(.contactsClientField) ? (try? c.decodeIfPresent(String.self, forKey: .contactsClientField)) : d.contactsClientField
-        recapClientField = try? c.decodeIfPresent(String.self, forKey: .recapClientField)
-        recapContactsField = try? c.decodeIfPresent(String.self, forKey: .recapContactsField)
-        recapTitleField = (try? c.decode(String.self, forKey: .recapTitleField)) ?? d.recapTitleField
-        recapDateField = (try? c.decode(String.self, forKey: .recapDateField)) ?? d.recapDateField
-        recapAttendeesField = (try? c.decode(String.self, forKey: .recapAttendeesField)) ?? d.recapAttendeesField
-        recapExternalIdField = (try? c.decode(String.self, forKey: .recapExternalIdField)) ?? d.recapExternalIdField
-        playbookGoalField = (try? c.decode(String.self, forKey: .playbookGoalField)) ?? d.playbookGoalField
-        playbookStepsField = (try? c.decode(String.self, forKey: .playbookStepsField)) ?? d.playbookStepsField
+        contactsClientField = link(.contactsClientField, d.contactsClientField)
+        meetingClientField = link(.meetingClientField, d.meetingClientField)
+        meetingProjectField = link(.meetingProjectField, d.meetingProjectField)
+        meetingTemplateField = link(.meetingTemplateField, d.meetingTemplateField)
+        meetingParticipantsField = link(.meetingParticipantsField, d.meetingParticipantsField)
+        meetingTitleField = str(.meetingTitleField, d.meetingTitleField)
+        meetingDateField = str(.meetingDateField, d.meetingDateField)
+        meetingTypeField = str(.meetingTypeField, d.meetingTypeField)
+        meetingExternalIdField = str(.meetingExternalIdField, d.meetingExternalIdField)
+        templateAgendaField = str(.templateAgendaField, d.templateAgendaField)
+        templateGoalField = str(.templateGoalField, d.templateGoalField)
+        templateTypeField = str(.templateTypeField, d.templateTypeField)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -87,29 +117,41 @@ public struct AyaConfig: Codable, Equatable, Sendable {
         try c.encode(orgId, forKey: .orgId)
         try c.encode(lists, forKey: .lists)
         try c.encode(contactsClientField, forKey: .contactsClientField)   // explicit null = no link
-        try c.encode(recapClientField, forKey: .recapClientField)
-        try c.encode(recapContactsField, forKey: .recapContactsField)
-        try c.encode(recapTitleField, forKey: .recapTitleField)
-        try c.encode(recapDateField, forKey: .recapDateField)
-        try c.encode(recapAttendeesField, forKey: .recapAttendeesField)
-        try c.encode(recapExternalIdField, forKey: .recapExternalIdField)
-        try c.encode(playbookGoalField, forKey: .playbookGoalField)
-        try c.encode(playbookStepsField, forKey: .playbookStepsField)
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case orgId, lists, contactsClientField, recapClientField, recapContactsField
-        case recapTitleField, recapDateField, recapAttendeesField, recapExternalIdField
-        case playbookGoalField, playbookStepsField
+        try c.encode(meetingClientField, forKey: .meetingClientField)
+        try c.encode(meetingProjectField, forKey: .meetingProjectField)
+        try c.encode(meetingTemplateField, forKey: .meetingTemplateField)
+        try c.encode(meetingParticipantsField, forKey: .meetingParticipantsField)
+        try c.encode(meetingTitleField, forKey: .meetingTitleField)
+        try c.encode(meetingDateField, forKey: .meetingDateField)
+        try c.encode(meetingTypeField, forKey: .meetingTypeField)
+        try c.encode(meetingExternalIdField, forKey: .meetingExternalIdField)
+        try c.encode(templateAgendaField, forKey: .templateAgendaField)
+        try c.encode(templateGoalField, forKey: .templateGoalField)
+        try c.encode(templateTypeField, forKey: .templateTypeField)
     }
 
     // MARK: Persistence (shared with msctl through the app's defaults domain)
 
-    static let defaultsKey = "aya.config.v1"
+    static let defaultsKey = "aya.config.v2"
+    /// Before meeting templates: playbooks and a separate recap list.
+    static let legacyKey = "aya.config.v1"
 
     public static func load() -> AyaConfig {
-        guard let s = AppDefaults.shared.string(forKey: defaultsKey),
-              let c = try? JSONDecoder().decode(AyaConfig.self, from: Data(s.utf8)) else { return AyaConfig() }
+        let d = AppDefaults.shared
+        if let s = d.string(forKey: defaultsKey), let c = try? JSONDecoder().decode(AyaConfig.self, from: Data(s.utf8)) { return c }
+        if let s = d.string(forKey: legacyKey) { return migrate(legacy: Data(s.utf8)) }
+        return AyaConfig()
+    }
+
+    /// Keeps the connection, the client and contact lists and the contact link; the meeting
+    /// lists are picked again when the app next talks to Aya.
+    static func migrate(legacy: Data) -> AyaConfig {
+        struct Legacy: Decodable { var orgId: String?; var lists: [String: AyaListRef]?; var contactsClientField: String? }
+        var c = AyaConfig()
+        guard let old = try? JSONDecoder().decode(Legacy.self, from: legacy) else { return c }
+        c.orgId = old.orgId ?? ""
+        for slot in [AyaSlot.clients, .contacts] { c.lists[slot.rawValue] = old.lists?[slot.rawValue] }
+        if let link = old.contactsClientField { c.contactsClientField = link }
         return c
     }
 

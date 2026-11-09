@@ -60,10 +60,22 @@ public enum PlaybookParser {
 
 /// Everything Claude is told before the meeting starts. Built from Aya, stored with the session.
 public struct AssistContext: Codable, Sendable {
-    public var clientID: String
+    /// nil for a meeting without a client (internal, or project only).
+    public var clientID: String?
+    /// Empty without a client.
     public var clientTitle: String
     public var clientFieldList: [LabeledValue]
     public var contacts: [ContactInfo]
+    public var projectID: String?
+    public var projectTitle: String?
+    public var projectFieldList: [LabeledValue]?
+    /// The planned meeting in Aya this recording belongs to.
+    public var meetingID: String?
+    public var meetingTitle: String?
+    /// Meeting type (select option) from the planned meeting or the template.
+    public var meetingType: String?
+    // The meeting template (agenda and questions). Named "playbook" from before templates;
+    // the checklist works the same.
     public var playbookID: String?
     public var playbookTitle: String?
     public var playbookGoal: String?
@@ -82,13 +94,21 @@ public struct AssistContext: Codable, Sendable {
         public var title: String; public var date: String; public var fields: [LabeledValue]
     }
 
-    public init(clientID: String, clientTitle: String, clientFieldList: [LabeledValue], contacts: [ContactInfo],
+    public init(clientID: String?, clientTitle: String, clientFieldList: [LabeledValue], contacts: [ContactInfo],
                 playbookID: String?, playbookTitle: String?, playbookGoal: String?, playbookItems: [PlaybookItem],
                 recaps: [RecapSummary], goal: String, mode: MeetingMode, myName: String, date: Date) {
         self.clientID = clientID; self.clientTitle = clientTitle; self.clientFieldList = clientFieldList
         self.contacts = contacts; self.playbookID = playbookID; self.playbookTitle = playbookTitle
         self.playbookGoal = playbookGoal; self.playbookItems = playbookItems; self.recaps = recaps
         self.goal = goal; self.mode = mode; self.myName = myName; self.date = date
+    }
+
+    /// A name for the meeting: the planned meeting's title, else client or project and template.
+    public var title: String {
+        if let t = meetingTitle, !t.isEmpty { return t }
+        let who = clientID != nil ? clientTitle : (projectTitle ?? "")
+        let parts = [who, playbookTitle ?? ""].filter { !$0.isEmpty }
+        return parts.isEmpty ? "Meeting" : parts.joined(separator: " – ")
     }
 
     /// Tracking, usage and bookkeeping fields that don't help in a conversation.
@@ -122,26 +142,35 @@ public struct AssistContext: Codable, Sendable {
             }
             return out
         }
-        clientID = aya.client.id
-        clientTitle = aya.client.title
-        clientFieldList = values(aya.client, schema: aya.clientSchema)
+        clientID = aya.client?.id
+        clientTitle = aya.client?.title ?? ""
+        clientFieldList = aya.client.map { values($0, schema: aya.clientSchema) } ?? []
         contacts = aya.contacts.map { c in
             ContactInfo(id: c.id, name: c.title, details: values(c, schema: aya.contactSchema,
                                                                  skip: ["gclid__value", "ga_client_id__value", "utm_source__value", "utm_medium__value"]))
         }
-        if let p = aya.playbook {
+        projectID = aya.project?.id
+        projectTitle = aya.project?.title
+        projectFieldList = aya.project.map { values($0, schema: aya.projectSchema) }
+        meetingID = aya.meeting?.id
+        meetingTitle = aya.meeting?.title
+        let typeFromMeeting = aya.meeting?[config.meetingTypeField]?.string
+        let typeFromTemplate = aya.template?[config.templateTypeField]?.string
+        // A new meeting takes the template's type; a planned one keeps its own unless it has none.
+        meetingType = aya.meeting == nil ? (typeFromTemplate ?? typeFromMeeting) : (typeFromMeeting ?? typeFromTemplate)
+        if let p = aya.template {
             playbookID = p.id
             playbookTitle = p.title
-            playbookGoal = p[config.playbookGoalField]?.string
-            playbookItems = PlaybookParser.items(p[config.playbookStepsField]?.string ?? "")
+            playbookGoal = p[config.templateGoalField]?.string
+            playbookItems = PlaybookParser.items(p[config.templateAgendaField]?.string ?? "")
         } else {
             playbookID = nil; playbookTitle = nil; playbookGoal = nil; playbookItems = []
         }
         recaps = aya.recaps.map { r in
-            let date = r[config.recapDateField]?.string ?? r.values["createdAt"]?.string ?? ""
+            let date = r[config.meetingDateField]?.string ?? r.values["createdAt"]?.string ?? ""
             return RecapSummary(title: r.title, date: String(date.prefix(10)),
                                 fields: values(r, schema: aya.recapSchema,
-                                               skip: [config.recapTitleField, config.recapDateField, config.recapExternalIdField,
+                                               skip: [config.meetingTitleField, config.meetingDateField, config.meetingExternalIdField,
                                                       "createdAt", "updatedAt"]))
         }
         self.goal = goal; self.mode = mode; self.myName = myName; self.date = date

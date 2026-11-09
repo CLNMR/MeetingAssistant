@@ -35,12 +35,13 @@ func claudeBinary() throws -> URL {
     return b
 }
 
-/// Builds the context for a session from Aya (client and playbook ids from the arguments or assist.json).
+/// Builds the context for a session from Aya (meeting, client, project and template ids from the
+/// arguments, else from assist.json).
 func replayContext(_ args: [String], sessionID: String, mode: MeetingMode) async throws -> AssistContext {
-    if let rec = AssistRecord.load(sessionID), option(args, "--client") == nil { return rec.context }
-    guard let client = option(args, "--client") else { throw AyaError.badRequest("--client <id> is required") }
+    let ids = ["--meeting", "--client", "--project", "--template"].map { option(args, $0) }
+    if let rec = AssistRecord.load(sessionID), ids.allSatisfy({ $0 == nil }) { return rec.context }
     let svc = try ayaService()
-    let aya = try await svc.meetingContext(clientID: client, playbookID: option(args, "--playbook"))
+    let aya = try await svc.meetingContext(meetingID: ids[0], clientID: ids[1], projectID: ids[2], templateID: ids[3])
     return AssistContext(aya: aya, config: svc.config, goal: option(args, "--goal") ?? "", mode: mode,
                          myName: option(args, "--me") ?? "Me", date: Date())
 }
@@ -58,8 +59,8 @@ func runAssist(_ args: [String]) -> Never {
             } else { print("could not read `claude auth status`") }
 
         case "replay":
-            // msctl assist replay <session-id> --client <id> [--playbook <id>] [--speed 8] [--model opus] [--minutes 10]
-            guard let sid = rest.first else { throw AyaError.badRequest("usage: msctl assist replay <session-id> --client <id> [--playbook <id>] [--speed N] [--minutes M]") }
+            // msctl assist replay <session-id> [--meeting|--client|--project|--template <id>] [--speed 8] [--model opus] [--minutes 10]
+            guard let sid = rest.first else { throw AyaError.badRequest("usage: msctl assist replay <session-id> [--meeting|--client|--project|--template <id>] [--speed N] [--minutes M]") }
             let info = try JSONIO.read(SessionInfo.self, from: AppPaths.info(sid))
             let transcript = try JSONIO.read(Transcript.self, from: AppPaths.session(sid).appendingPathComponent("transcript.json"))
             let speed = Double(option(rest, "--speed") ?? "1") ?? 1
@@ -72,7 +73,7 @@ func runAssist(_ args: [String]) -> Never {
             let printer = StatePrinter()
             let engine = AssistEngine(context: context, settings: settings, binary: try claudeBinary()) { s, st in printer.show(s, st) }
             print("replaying \(info.title) (\(Int(info.durationSec / 60)) min) at \(speed)× with \(settings.model)/\(settings.effort)")
-            print("context: \(context.clientTitle) · \(context.contacts.count) contacts · playbook \(context.playbookTitle ?? "—") (\(context.playbookItems.count) items) · \(context.recaps.count) recaps")
+            print("context: \(context.title) · \(context.contacts.count) contacts · template \(context.playbookTitle ?? "—") (\(context.playbookItems.count) items) · \(context.recaps.count) recaps")
             await engine.start()
             let me = info.mode == .call ? (transcript.speakers.first { $0.isMe }?.id) : nil
             let start = Date()
@@ -139,7 +140,7 @@ func runAssist(_ args: [String]) -> Never {
             let cfg = AyaConfig.load()
             let model = option(rest, "--model") ?? "opus"
             if sub == "recap" {
-                guard let schema = AyaCache.schema(.recaps) else { throw AyaError.notConfigured }
+                guard let schema = AyaCache.schema(.meetings) else { throw AyaError.notConfigured }
                 let t0 = Date()
                 let fields = try await RecapBuilder.draftRecap(binary: try claudeBinary(), model: model, record: rec, sessionID: sid, schema: schema, config: cfg)
                 print("recap draft in \(String(format: "%.1f", Date().timeIntervalSince(t0)))s")
@@ -149,8 +150,8 @@ func runAssist(_ args: [String]) -> Never {
                     let svc = try ayaService()
                     let info = try JSONIO.read(SessionInfo.self, from: AppPaths.info(sid))
                     var values = RecapBuilder.recapValues(fields, record: rec, sessionID: sid, startedAt: info.startedAt, schema: schema, config: cfg)
-                    values[cfg.recapTitleField] = .string("TEST " + (values[cfg.recapTitleField]?.description ?? ""))
-                    let ref = cfg.list(.recaps)!
+                    values[cfg.meetingTitleField] = .string("TEST " + (values[cfg.meetingTitleField]?.description ?? ""))
+                    let ref = cfg.list(.meetings)!
                     let created = try await svc.client.create(workspace: ref.workspaceId, list: ref.techName, values: values)
                     print("created \(created.id): \(created.title)")
                     for k in values.keys.sorted() { print("  \(k) = \(AssistPrompts.clipPublic(created[k]?.description ?? "∅", 120))") }
@@ -160,7 +161,8 @@ func runAssist(_ args: [String]) -> Never {
             } else {
                 let svc = try ayaService()
                 guard let cRef = cfg.list(.clients), let cs = AyaCache.schema(.clients) else { throw AyaError.notConfigured }
-                let client = try await svc.client.record(workspace: cRef.workspaceId, list: cRef.techName, id: rec.context.clientID)
+                guard let clientID = rec.context.clientID else { throw AyaError.badRequest("this meeting has no client") }
+                let client = try await svc.client.record(workspace: cRef.workspaceId, list: cRef.techName, id: clientID)
                 var contacts: [AyaRecord] = []
                 if let pRef = cfg.list(.contacts) {
                     for c in rec.context.contacts { if let r = try? await svc.client.record(workspace: pRef.workspaceId, list: pRef.techName, id: c.id) { contacts.append(r) } }

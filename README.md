@@ -3,7 +3,7 @@
 A native macOS app for meetings, with two modes (switch with the toolbar, ⌘1 / ⌘2):
 
 - **Scribe** records meetings and turns them into speaker-labelled transcripts. Everything runs locally on Apple Silicon: no cloud, no account, audio never leaves the Mac.
-- **Assist** reads the live transcript together with client context from Aya and suggests the next question, keeps a running summary, and tracks attendees, open points and the playbook. It uses the local Claude Code login (your Claude subscription) and sends the transcript text, not audio, to Claude.
+- **Assist** reads the live transcript together with the meeting's context from Aya (planned meeting, template, client, project) and suggests the next question, keeps a running summary, and tracks attendees, open points and the template's checklist. It uses the local Claude Code login (your Claude subscription) and sends the transcript text, not audio, to Claude.
 
 The app was called MeetingScribe until November 2026. It keeps the same bundle identifier, so permissions and settings carry over, and it moves `~/Library/Application Support/MeetingScribe` to `…/MeetingAssistant` on first launch.
 
@@ -64,12 +64,12 @@ Assist turns a recording into a live sales/meeting copilot and writes the result
 **Setup (once):**
 1. Install [Claude Code](https://claude.com/code) and run `claude` once in Terminal to log in with your Claude account. Assist uses that login (your subscription), not an API key.
 2. In Aya, switch on *API documentation* in the organization settings (the app reads each list's fields from it).
-3. Settings › Assist: enter the Aya organization id (the part after `app.hey-aya.ai/org/` in the URL) and an org API key (`aya_key_…`, stored in the Keychain), then *Connect*. The app picks the lists *Companies*, *Contacts*, *Playbooks* and *Meetings*; each can be changed there, together with the link fields (contact → company, recap → company, recap → contacts).
+3. Settings › Assist: enter the Aya organization id (the part after `app.hey-aya.ai/org/` in the URL) and an org API key (`aya_key_…`, stored in the Keychain), then *Connect*. The app picks the lists *Companies*, *Contacts*, *Projects*, *Meeting templates*, *Meetings* and *Members*; each can be changed there, together with the link fields (contact → company; meeting → client, project, template and team members). A list follows its record type when it moves to another workspace.
 
 **A meeting:**
-1. Assist mode (⌘2): pick the client and the playbook, optionally a goal, and *Start Assist*. This starts a normal recording with live transcription.
-2. Claude reads the client record, its contacts, the playbook and the last recaps, and keeps five panels up to date: the **next question** (with alternatives; *Asked*, *Other*, *Suggest now* ⇧⌘Space), a running **summary**, **open points**, the **attendees** (matched to speakers and Aya contacts) and the **playbook** checklist. Questions and summary follow the language of the meeting. Ticking items by hand is passed on to Claude. The floating live transcript window shows the next question too.
-3. *Stop*: the final transcript is made as usual, then Claude drafts the **recap** from the recap list's fields. Edit it and *Upload to Aya* (uploading again updates the same record).
+1. Assist mode (⌘2): either pick a meeting planned in Aya (today and the next 14 days; its client, project and template are taken over), or choose a template and/or client and/or project yourself. Optionally a goal, then *Start Assist*. This starts a normal recording with live transcription.
+2. Claude reads the planned meeting, the client record and its contacts, the project, the template (agenda and questions become the checklist) and the last meetings with that client or project, and keeps five panels up to date: the **next question** (with alternatives; *Asked*, *Other*, *Suggest now* ⇧⌘Space), a running **summary**, **open points**, the **attendees** (matched to speakers and Aya contacts) and the template's **checklist**. Questions and summary follow the language of the meeting. Ticking items by hand is passed on to Claude. The floating live transcript window shows the next question too.
+3. *Stop*: the final transcript is made as usual, then Claude drafts the **recap** from the meeting list's fields. Choose where it goes: the planned meeting, another Aya meeting from that day (for example one a call bot created), or a new meeting. For an existing meeting its current values are shown and fields that already have content are only overwritten when ticked; links (client, project, template), date and type are filled only where empty, and team members who attended are added as participants. Saving again updates the same meeting.
 4. *Propose Updates*: Claude compares the client and contact records with what was said and proposes changes, each with a reason, plus new contacts for attendees not yet in Aya. Nothing is written until you tick it and *Apply*.
 
 A recording made with Assist has an *Assist Recap* button in Scribe, to do steps 3–4 later.
@@ -160,10 +160,11 @@ Assist and Aya (`AYA_API_KEY` overrides the Keychain):
 
 ```
 .build/release/msctl aya setup <orgId>                  # connect, pick default lists, read fields
-.build/release/msctl aya list clients|playbooks         # reload a picker list
-.build/release/msctl aya context <clientId> [playbookId]   # what Claude is told before a meeting
+.build/release/msctl aya list clients|projects|templates|members   # reload a picker list
+.build/release/msctl aya upcoming [days]                  # planned meetings
+.build/release/msctl aya context [--meeting id] [--client id] [--project id] [--template id]   # what Claude is told
 .build/release/msctl assist check                       # Claude Code installed and logged in?
-.build/release/msctl assist replay <id> --client <clientId> [--playbook <id>] [--speed 4] [--minutes 5] [--save file]
+.build/release/msctl assist replay <id> [--meeting|--client|--project|--template <id>] [--speed 4] [--minutes 5] [--save file]
 .build/release/msctl assist live <id> --client <clientId> [--minutes 3]   # real audio → live transcriber → Claude
 .build/release/msctl assist recap|crm <id> [--record file] # draft the recap / CRM proposal (prints only)
 ```

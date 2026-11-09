@@ -36,6 +36,25 @@ public struct AyaRecord: Codable, Identifiable, Hashable, Sendable {
     public subscript(key: String) -> JSONValue? { values[key] }
     public var updatedAt: Date? { values["updatedAt"]?.string.flatMap(AyaText.parseDate) }
     public var createdAt: Date? { values["createdAt"]?.string.flatMap(AyaText.parseDate) }
+    /// A date field's value.
+    public func date(_ key: String) -> Date? { AyaText.date(values[key]?.string) }
+    /// The record a relation field points to: `x__id`, or the first of `x__ids`.
+    public func linkedID(_ key: String) -> String? {
+        if let s = values[key]?.string, !s.isEmpty { return s }
+        return values[key]?.array?.first?.string
+    }
+    /// All records a relation field points to.
+    public func linkedIDs(_ key: String) -> [String] {
+        if let s = values[key]?.string, !s.isEmpty { return [s] }
+        return values[key]?.array?.compactMap(\.string) ?? []
+    }
+    /// The title Aya shows for a linked record (`x__computed_title`).
+    public func linkedTitle(_ key: String) -> String? {
+        guard let base = key.components(separatedBy: "__").first else { return nil }
+        if let s = values[base + "__computed_title"]?.string, !s.isEmpty { return s }
+        let many = values[base + "__computed_titles"]?.array?.compactMap(\.string) ?? []
+        return many.isEmpty ? nil : many.joined(separator: ", ")
+    }
 }
 
 public enum AyaText {
@@ -52,6 +71,13 @@ public enum AyaText {
         if let d = f.date(from: s) { return d }
         f.formatOptions = [.withInternetDateTime]
         return f.date(from: s)
+    }
+
+    public static func date(_ s: String?) -> Date? {
+        guard let s, !s.isEmpty else { return nil }
+        if let d = parseDate(s) { return d }
+        let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "yyyy-MM-dd"
+        return f.date(from: String(s.prefix(10)))
     }
 
     public static func iso(_ d: Date) -> String {

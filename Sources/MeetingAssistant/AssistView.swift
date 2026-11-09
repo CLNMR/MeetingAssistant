@@ -117,7 +117,7 @@ private struct AssistConnectView: View {
                         Text("Connect Aya").font(.system(size: 22, weight: .semibold))
                     }
                 }
-                Text("Pick a client and a playbook from Aya, start the meeting, and Claude suggests the next question, keeps a running summary, and tracks attendees, open points and the playbook while you talk. Afterwards it writes the recap into Aya.")
+                Text("Pick a planned meeting, or a template, client and project from Aya, start the meeting, and Claude suggests the next question, keeps a running summary, and tracks attendees, open points and the template's checklist while you talk. Afterwards it saves the recap to the meeting in Aya.")
                     .font(.system(size: 13)).foregroundStyle(Aya.textMuted).fixedSize(horizontal: false, vertical: true)
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Organization id").font(.system(size: 12, weight: .medium))
@@ -134,7 +134,7 @@ private struct AssistConnectView: View {
                         .disabled(org.trimmingCharacters(in: .whitespaces).isEmpty || (key.isEmpty && !assist.hasAPIKey) || assist.connectState.isWorking)
                     StepLine(step: assist.connectState)
                 }
-                Text("The lists (clients, contacts, playbooks, meeting recaps) can be changed later in Settings › Assist.")
+                Text("The lists (clients, contacts, projects, templates, meetings) can be changed later in Settings › Assist.")
                     .font(.system(size: 11)).foregroundStyle(Aya.textSubtle)
             }
             .padding(28)
@@ -157,36 +157,110 @@ private struct AssistPrepView: View {
     @State private var searchTask: Task<Void, Never>?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             PageHeader(eyebrow: "Assist", title: "Prepare meeting",
-                       subtitle: "Choose the client and playbook; Claude reads them before the meeting starts.") {
+                       subtitle: "Pick a meeting planned in Aya, or choose a template, client and project. Claude reads them before the meeting starts.") {
                 HStack(spacing: 8) {
                     if let d = assist.listsFetchedAt {
                         Text("Aya lists updated \(d.formatted(.relative(presentation: .named)))").font(.system(size: 11)).foregroundStyle(Aya.textSubtle)
                     }
                     Button { Task { await assist.refreshLists() } } label: { Label("Refresh", systemImage: "arrow.clockwise") }
                         .buttonStyle(AyaButtonStyle(kind: .secondary))
-                        .help("Reload clients and playbooks from Aya")
+                        .help("Reload planned meetings, templates, clients and projects from Aya")
                         .disabled(assist.listState.isWorking)
                 }
             }
+            plannedStrip
             HStack(alignment: .top, spacing: 8) {
-                clientColumn.frame(minWidth: 260, idealWidth: 320, maxWidth: 360)
+                clientColumn.frame(minWidth: 260, idealWidth: 300, maxWidth: 340)
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .top, spacing: 8) {
-                        playbookPicker
-                        meetingSettings
+                        templateCard
+                        projectCard
                     }
                     .fixedSize(horizontal: false, vertical: true)
+                    meetingSettings
                     previewBox
                 }
-                .frame(minWidth: 360)
+                .frame(minWidth: 380)
             }
             footer
         }
         .padding(20)
         .background(AyaBackdrop())
+        .task { await assist.refreshUpcoming() }
     }
+
+    // MARK: Planned meetings
+
+    private var plannedStrip: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                AyaEyebrow(text: "Planned in Aya", icon: "calendar")
+                Text("today and the next 14 days").font(.system(size: 11)).foregroundStyle(Aya.textSubtle)
+                Spacer()
+                if assist.meetingID != nil {
+                    Text("The recap is saved to this meeting afterwards.").font(.system(size: 11)).foregroundStyle(Aya.textMuted)
+                }
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    plannedCard(nil)
+                    ForEach(assist.upcoming, id: \.id) { m in plannedCard(m) }
+                }
+                .padding(1)
+            }
+        }
+        .padding(14)
+        .ayaSurface()
+    }
+
+    private func plannedCard(_ m: AyaRecord?) -> some View {
+        let on = assist.meetingID == m?.id
+        let cfg = assist.config
+        let date = m?.date(cfg.meetingDateField)
+        let links = m.map { r in
+            [cfg.meetingClientField, cfg.meetingProjectField, cfg.meetingTemplateField].compactMap { $0.flatMap { r.linkedTitle($0) } }
+        } ?? []
+        let hasNotes = m.map { r in ["summary__value", "decisions__value", "next_steps__value"].contains { !(r[$0]?.isEmpty ?? true) } } ?? false
+        return Button { assist.meetingID = m?.id } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Image(systemName: m == nil ? "plus" : "calendar").font(.system(size: 10, weight: .semibold))
+                    Text(m == nil ? "New meeting" : date.map(plannedDate) ?? "No date")
+                        .font(.system(size: 11, weight: .semibold))
+                    Spacer(minLength: 0)
+                    if hasNotes { AyaTag(text: "Notes", color: Aya.textMuted) }
+                }
+                .foregroundStyle(on ? Aya.primary : Aya.textMuted)
+                Text(m?.title ?? "Choose template, client and project yourself")
+                    .font(.system(size: 13, weight: .medium)).foregroundStyle(m == nil ? Aya.textMuted : Aya.text)
+                    .lineLimit(2).multilineTextAlignment(.leading)
+                if !links.isEmpty {
+                    Text(links.joined(separator: " · ")).font(.system(size: 11)).foregroundStyle(Aya.textMuted).lineLimit(1)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(10)
+            .frame(width: 210, height: 84, alignment: .topLeading)
+            .background(on ? Aya.primary.opacity(0.10) : Aya.card, in: RoundedRectangle(cornerRadius: Aya.radiusContainer, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Aya.radiusContainer, style: .continuous)
+                .strokeBorder(on ? Aya.primary.opacity(0.6) : Aya.border, lineWidth: 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(m.map { "\($0.title)\(hasNotes ? " · already has notes in Aya" : "")" } ?? "A new meeting is created in Aya afterwards")
+    }
+
+    private func plannedDate(_ d: Date) -> String {
+        let cal = Calendar.current
+        let time = d.formatted(date: .omitted, time: .shortened)
+        if cal.isDateInToday(d) { return "Today \(time)" }
+        if cal.isDateInTomorrow(d) { return "Tomorrow \(time)" }
+        return d.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated)) + " " + time
+    }
+
+    // MARK: Client
 
     private var filteredClients: [AyaRecord] {
         let f = clientFilter.trimmingCharacters(in: .whitespaces)
@@ -218,6 +292,7 @@ private struct AssistPrepView: View {
                 }
             ScrollView {
                 LazyVStack(spacing: 2) {
+                    if clientFilter.isEmpty { clientRow(nil) }
                     ForEach(filteredClients, id: \.id) { c in clientRow(c) }
                 }
             }
@@ -228,20 +303,24 @@ private struct AssistPrepView: View {
         .ayaSurface()
     }
 
-    private func clientRow(_ c: AyaRecord) -> some View {
-        let on = assist.clientID == c.id
-        let sub = [c["branche__value"]?.description, c["domain__value"]?.description, c["region__value"]?.description]
-            .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
-        return Button { assist.clientID = c.id } label: {
+    private func clientRow(_ c: AyaRecord?) -> some View {
+        let on = assist.clientID == c?.id
+        let sub = c.map { c in
+            [c["branche__value"]?.description, c["domain__value"]?.description, c["region__value"]?.description]
+                .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+        } ?? "Internal meeting, or project only"
+        return Button { assist.clientID = c?.id } label: {
             HStack(spacing: 10) {
-                Text(ayaInitial(c.title))
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(on ? .white : Aya.primary)
-                    .frame(width: 28, height: 28)
-                    .background(on ? AnyShapeStyle(Aya.brand) : AnyShapeStyle(Aya.primary.opacity(0.10)),
-                                in: RoundedRectangle(cornerRadius: Aya.radiusControl, style: .continuous))
+                Group {
+                    if let c { Text(ayaInitial(c.title)) } else { Image(systemName: "minus") }
+                }
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(on ? .white : Aya.primary)
+                .frame(width: 28, height: 28)
+                .background(on ? AnyShapeStyle(Aya.brand) : AnyShapeStyle(Aya.primary.opacity(0.10)),
+                            in: RoundedRectangle(cornerRadius: Aya.radiusControl, style: .continuous))
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(c.title).font(.system(size: 13, weight: on ? .semibold : .medium)).lineLimit(1)
+                    Text(c?.title ?? "No client").font(.system(size: 13, weight: on ? .semibold : .medium)).lineLimit(1)
                     if !sub.isEmpty { Text(sub).font(.system(size: 11)).foregroundStyle(Aya.textMuted).lineLimit(1) }
                 }
                 Spacer(minLength: 0)
@@ -253,14 +332,42 @@ private struct AssistPrepView: View {
         .buttonStyle(.plain)
     }
 
-    private var playbookPicker: some View {
+    // MARK: Template, project, meeting
+
+    private var templateCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            AyaEyebrow(text: "Playbook", icon: "checklist")
-            AyaSelect(selection: $assist.playbookID,
-                      options: [(String?.none, "None")] + assist.playbooks.map { (String?.some($0.id), $0.title) })
-            if let pid = assist.playbookID, let p = assist.playbooks.first(where: { $0.id == pid }),
-               let goal = p["goal__value"]?.string, !goal.isEmpty {
-                Text(goal).font(.system(size: 12)).foregroundStyle(Aya.textMuted).lineLimit(3)
+            AyaEyebrow(text: "Template", icon: "checklist")
+            AyaSelect(selection: $assist.templateID,
+                      options: [(String?.none, "No template")] + assist.templates.map { (String?.some($0.id), $0.title) })
+            if let tid = assist.templateID, let t = assist.templates.first(where: { $0.id == tid }) {
+                HStack(spacing: 6) {
+                    if let type = t[assist.config.templateTypeField]?.string, !type.isEmpty { AyaTag(text: type, color: Aya.primary) }
+                    let n = PlaybookParser.items(t[assist.config.templateAgendaField]?.string ?? "").count
+                    if n > 0 { AyaTag(text: "\(n) checklist items", color: Aya.agentTextMid, icon: "checklist") }
+                }
+                if let d = t[assist.config.templateGoalField]?.string, !d.isEmpty {
+                    Text(d).font(.system(size: 12)).foregroundStyle(Aya.textMuted).lineLimit(3)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .ayaSurface()
+    }
+
+    private var projectCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            AyaEyebrow(text: "Project", icon: "folder")
+            if assist.config.list(.projects) == nil {
+                Text("No project list chosen in Settings › Assist.").font(.system(size: 12)).foregroundStyle(Aya.textMuted)
+            } else {
+                AyaSelect(selection: $assist.projectID,
+                          options: [(String?.none, "No project")] + assist.projects.map { (String?.some($0.id), $0.title) })
+                if let pid = assist.projectID, let p = assist.projects.first(where: { $0.id == pid }),
+                   let st = p["status__value"]?.string, !st.isEmpty {
+                    AyaTag(text: st, color: Aya.textMuted)
+                }
             }
             Spacer(minLength: 0)
         }
@@ -270,40 +377,57 @@ private struct AssistPrepView: View {
     }
 
     private var meetingSettings: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        HStack(alignment: .center, spacing: 10) {
             AyaEyebrow(text: "Meeting", icon: "person.2")
             AyaSegmented(selection: $assist.mode, options: MeetingMode.allCases.map { ($0, $0.title, nil) })
+                .frame(maxWidth: 300)
             TextField("", text: $assist.goal, prompt: Text("Goal for this meeting (optional)"), axis: .vertical)
                 .lineLimit(1...3).textFieldStyle(AyaFieldStyle(icon: "target"))
         }
         .padding(14)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         .ayaSurface()
     }
+
+    // MARK: Preview
 
     private var previewBox: some View {
         VStack(alignment: .leading, spacing: 10) {
             AyaEyebrow(text: "What Claude will know", icon: "sparkles", color: Aya.agentTextMid)
-            if assist.clientID == nil {
-                Text("Select a client to see what Claude will know about it.").font(.system(size: 13)).foregroundStyle(Aya.textMuted)
-            } else if let p = assist.preview {
-                Text(p.client.title).font(.system(size: 18, weight: .semibold))
+            if let p = assist.preview {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
-                        if let profile = p.client.values.first(where: { $0.key.contains("profil") })?.value.string, !profile.isEmpty {
-                            Text(profile).font(.system(size: 13)).foregroundStyle(Aya.text).lineLimit(6)
+                        if let m = p.meeting {
+                            previewSection("Meeting") { Text(m.title).font(.system(size: 15, weight: .semibold)) }
                         }
-                        if !p.contacts.isEmpty {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text("Contacts").font(.system(size: 12, weight: .semibold)).foregroundStyle(Aya.textMuted)
-                                FlowChips(items: p.contacts.map { c in (c.title, c["position__value"]?.string) })
+                        if let c = p.client {
+                            previewSection("Client") {
+                                Text(c.title).font(.system(size: 15, weight: .semibold))
+                                if let profile = c.values.first(where: { $0.key.contains("profil") })?.value.string, !profile.isEmpty {
+                                    Text(profile).font(.system(size: 13)).foregroundStyle(Aya.text).lineLimit(5)
+                                }
                             }
                         }
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Earlier meetings").font(.system(size: 12, weight: .semibold)).foregroundStyle(Aya.textMuted)
+                        if let pr = p.project {
+                            previewSection("Project") { Text(pr.title).font(.system(size: 14, weight: .medium)) }
+                        }
+                        if let t = p.template {
+                            previewSection("Template") {
+                                Text(t.title).font(.system(size: 14, weight: .medium))
+                                let items = PlaybookParser.items(t[assist.config.templateAgendaField]?.string ?? "")
+                                if !items.isEmpty {
+                                    Text(items.prefix(6).map(\.text).joined(separator: " · ") + (items.count > 6 ? " …" : ""))
+                                        .font(.system(size: 12)).foregroundStyle(Aya.textMuted).lineLimit(3)
+                                }
+                            }
+                        }
+                        if !p.contacts.isEmpty {
+                            previewSection("Contacts") { FlowChips(items: p.contacts.map { c in (c.title, c["position__value"]?.string) }) }
+                        }
+                        previewSection("Earlier meetings") {
                             if p.recaps.isEmpty { Text("None found").font(.system(size: 13)).foregroundStyle(Aya.textSubtle) }
                             ForEach(p.recaps, id: \.id) { r in
-                                let d = String((r[assist.config.recapDateField]?.string ?? r.values["createdAt"]?.string ?? "").prefix(10))
+                                let d = String((r[assist.config.meetingDateField]?.string ?? r.values["createdAt"]?.string ?? "").prefix(10))
                                 HStack(spacing: 8) {
                                     Text(d).font(.system(size: 11).monospacedDigit()).foregroundStyle(Aya.textSubtle)
                                     Text(r.title).font(.system(size: 13)).lineLimit(1)
@@ -313,12 +437,22 @@ private struct AssistPrepView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
+            } else if !assist.previewState.isWorking {
+                Text("Nothing chosen yet: Claude then works from the conversation alone. Pick a planned meeting, a template, a client or a project to give it context.")
+                    .font(.system(size: 13)).foregroundStyle(Aya.textMuted).fixedSize(horizontal: false, vertical: true)
             }
             StepLine(step: assist.previewState)
         }
         .padding(14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .ayaAgentSurface(active: assist.preview != nil)
+    }
+
+    private func previewSection<C: View>(_ title: String, @ViewBuilder _ content: () -> C) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.system(size: 12, weight: .semibold)).foregroundStyle(Aya.textMuted)
+            content()
+        }
     }
 
     private var footer: some View {
@@ -426,7 +560,7 @@ private struct AssistLiveView: View {
             AyaWaveform(level: assist.paused ? 0 : ayaLevel(max(state.micLevel, state.systemLevel)))
             Rectangle().fill(Aya.border).frame(width: 1, height: 28).padding(.horizontal, 4)
             VStack(alignment: .leading, spacing: 1) {
-                Text(assist.context?.clientTitle ?? "").font(.system(size: 14, weight: .semibold)).lineLimit(1)
+                Text(assist.context?.title ?? "").font(.system(size: 14, weight: .semibold)).lineLimit(1)
                 if let p = assist.context?.playbookTitle { Text(p).font(.system(size: 11)).foregroundStyle(Aya.textMuted).lineLimit(1) }
             }
             Spacer()
@@ -646,7 +780,7 @@ private struct AssistReviewView: View {
 
     var body: some View {
         VStack(spacing: 14) {
-            PageHeader(eyebrow: "Meeting review", title: assist.record?.context.clientTitle ?? "Meeting",
+            PageHeader(eyebrow: "Meeting review", title: assist.record?.context.title ?? "Meeting",
                        subtitle: [assist.record?.context.playbookTitle, assist.record.map { $0.context.date.formatted(date: .abbreviated, time: .shortened) }]
                         .compactMap { $0 }.joined(separator: " · ")) {
                 HStack(spacing: 8) {
@@ -660,7 +794,7 @@ private struct AssistReviewView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     recapSection
-                    crmSection
+                    if assist.record?.context.clientID != nil { crmSection }
                 }
                 .frame(maxWidth: 920, alignment: .leading)
                 .frame(maxWidth: .infinity)
@@ -678,7 +812,7 @@ private struct AssistReviewView: View {
             HStack(alignment: .center) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Meeting recap").font(.system(size: 16, weight: .semibold))
-                    if let ref = assist.config.list(.recaps) { Text("→ \(ref.label) in \(ref.workspaceLabel)").font(.system(size: 12)).foregroundStyle(Aya.textMuted) }
+                    if let ref = assist.config.list(.meetings) { Text("→ \(ref.label) in \(ref.workspaceLabel)").font(.system(size: 12)).foregroundStyle(Aya.textMuted) }
                 }
                 Spacer()
                 if let id = assist.record?.recapRecordID, !id.isEmpty { AyaTag(text: "In Aya", color: Aya.success, icon: "checkmark") }
@@ -688,6 +822,7 @@ private struct AssistReviewView: View {
                 .buttonStyle(AyaButtonStyle(kind: assist.recapFields.isEmpty ? .agent : .secondary, pill: true))
                 .disabled(assist.recapState.isWorking)
             }
+            targetRow
             StepLine(step: assist.recapState)
             if !assist.recapFields.isEmpty {
                 VStack(alignment: .leading, spacing: 0) {
@@ -699,7 +834,7 @@ private struct AssistReviewView: View {
                 HStack {
                     Spacer()
                     Button { Task { await assist.uploadRecap() } } label: {
-                        Label(assist.record?.recapRecordID == nil ? "Upload to Aya" : "Update in Aya", systemImage: "arrow.up.circle")
+                        Label(assist.targetMeetingID == nil ? "Create Meeting in Aya" : "Save to Meeting", systemImage: "arrow.up.circle")
                     }
                     .buttonStyle(AyaButtonStyle(kind: .primary)).disabled(assist.recapState.isWorking)
                 }
@@ -707,6 +842,26 @@ private struct AssistReviewView: View {
         }
         .padding(18)
         .ayaSurface()
+    }
+
+    /// Where the recap goes: the planned meeting, another meeting of that day, or a new one.
+    private var targetRow: some View {
+        let cfg = assist.config
+        let options: [(String?, String)] = [(nil, "New meeting in Aya")] + assist.targetChoices.map { m in
+            let time = m.date(cfg.meetingDateField).map { $0.formatted(date: .omitted, time: .shortened) } ?? ""
+            let planned = m.id == assist.record?.context.meetingID ? " (planned)" : ""
+            return (m.id, [time, m.title].filter { !$0.isEmpty }.joined(separator: " · ") + planned)
+        }
+        return HStack(spacing: 10) {
+            Text("Save to").font(.system(size: 13, weight: .medium))
+            AyaSelect(selection: Binding(get: { assist.targetMeetingID }, set: { assist.setTarget($0) }), options: options)
+                .frame(maxWidth: 420)
+            if assist.targetMeetingID != nil {
+                Text("Fields that already have content in Aya are only overwritten when you tick them.")
+                    .font(.system(size: 11)).foregroundStyle(Aya.textSubtle).fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
     }
 
     // CRM
@@ -770,7 +925,20 @@ private struct FieldEditor: View {
     @Binding var field: ProposedValue
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Toggle(isOn: $field.include) { Text(field.label).font(.system(size: 13, weight: .semibold)) }.toggleStyle(.checkbox)
+            Toggle(isOn: $field.include) {
+                HStack(spacing: 6) {
+                    Text(field.label).font(.system(size: 13, weight: .semibold))
+                    if !field.old.isEmpty { AyaTag(text: field.include ? "Replaces the current text" : "Has content in Aya", color: field.include ? Aya.warning : Aya.textMuted) }
+                }
+            }
+            .toggleStyle(.checkbox)
+            if !field.old.isEmpty {
+                HStack(alignment: .top, spacing: 6) {
+                    Text("Now").font(.system(size: 10, weight: .semibold)).foregroundStyle(Aya.textSubtle)
+                    Text(field.old).font(.system(size: 12)).foregroundStyle(Aya.textMuted).lineLimit(field.include ? 2 : 4)
+                }
+                .padding(.leading, 20)
+            }
             if field.include { editor(for: $field).padding(.leading, 20) }
         }
     }
@@ -882,8 +1050,16 @@ enum AssistSnapshots {
         // 1. Preparation
         a.phase = .prepare
         if let first = a.clients.first(where: { $0.title.contains("MUSTER") }) ?? a.clients.first { a.clientID = first.id }
+        a.templateID = a.templates.first(where: { $0.title.contains("Kickoff") })?.id ?? a.templates.first?.id
+        a.projectID = a.projects.first(where: { $0.title.contains("P0182") })?.id
         a.claudeState = .done("ok"); a.claudeBinary = URL(fileURLWithPath: "/usr/bin/true"); a.claudeAuth = .init(loggedIn: true, method: nil, subscription: "team", email: nil)
-        render(ContentView(), app: app, size: CGSize(width: 1280, height: 800), to: dir.appendingPathComponent("1-prepare.png"), wait: 6)
+        // Network calls don't finish while rendering here, so planned meetings can come from a file.
+        if let f = ProcessInfo.processInfo.environment["ASSIST_SNAPSHOT_UPCOMING"],
+           let list = try? JSONIO.read([AyaRecord].self, from: URL(fileURLWithPath: f)) {
+            a.upcoming = list
+            if let pne = list.first(where: { a.config.meetingProjectField.flatMap($0.linkedID) != nil }) { a.meetingID = pne.id }
+        }
+        render(ContentView(), app: app, size: CGSize(width: 1280, height: 800), to: dir.appendingPathComponent("1-prepare.png"), wait: 15)
 
         // 2. Live
         if let rec {
@@ -901,7 +1077,6 @@ enum AssistSnapshots {
             a.record = rec
             a.recapFields = [
                 ProposedValue(key: "title__value", label: "Title", kind: .text, options: [], old: "", value: "MUSTER SOLAR – Erstgespräch Testlauf", reason: nil, include: true),
-                ProposedValue(key: "meeting_type__value", label: "Meeting type", kind: .select, options: ["customer", "internal"], old: "", value: "customer", reason: nil, include: true),
                 ProposedValue(key: "summary__value", label: "Summary", kind: .markdown, options: [], old: "", value: "## Ausgangslage\n- Festival mit über 2.000 Crew-Mitgliedern\n- Excel und WhatsApp", reason: nil, include: true),
             ]
             a.crm = CRMProposal(client: [ProposedValue(key: "field_ops__value", label: "Field ops", kind: .boolean, options: [], old: "no", value: "true",

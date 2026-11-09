@@ -43,9 +43,12 @@ struct AssistSettingsView: View {
 
                 Section("Links") {
                     relationPicker("Contact → client", slot: .contacts, value: $assist.config.contactsClientField)
-                    relationPicker("Recap → client", slot: .recaps, value: $assist.config.recapClientField,
-                                   noneHint: "Without a link, earlier recaps are found by the client's name.")
-                    relationPicker("Recap → contacts", slot: .recaps, value: $assist.config.recapContactsField)
+                    relationPicker("Meeting → client", slot: .meetings, value: $assist.config.meetingClientField,
+                                   noneHint: "Without a link, earlier meetings are found by the client's name.")
+                    relationPicker("Meeting → project", slot: .meetings, value: $assist.config.meetingProjectField)
+                    relationPicker("Meeting → template", slot: .meetings, value: $assist.config.meetingTemplateField)
+                    relationPicker("Meeting → team members", slot: .meetings, value: $assist.config.meetingParticipantsField,
+                                   noneHint: "Team members who attended are added here, matched by name.")
                 }
             }
 

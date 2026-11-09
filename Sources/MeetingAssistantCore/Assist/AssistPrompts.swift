@@ -6,7 +6,8 @@ public enum AssistPrompts {
     public static let system = """
     You are MeetingAssistant, a live copilot for the user (called "Me" in the transcript) during a business meeting. \
     The transcript arrives in chunks while the meeting is running. Before the meeting you get context from the user's CRM: \
-    the client company, its known contacts, a playbook for this kind of meeting, and recaps of earlier meetings.
+    whichever applies of the client company and its known contacts, the project, the meeting template (agenda and questions, \
+    used as the playbook), and recaps of earlier meetings. An internal meeting may have no client.
 
     Your job after every chunk: help the user steer the conversation. Keep five panels up to date:
     1. Next questions: the 1–3 best questions the user could ask next to go deeper. Concrete, short, in the user's voice, \
@@ -47,8 +48,17 @@ public enum AssistPrompts {
         s += c.mode == .call ? " (their microphone is labelled Me; the remote side is labelled by speaker).\n" : ".\n"
         if !c.goal.trimmingCharacters(in: .whitespaces).isEmpty { s += "User's goal for this meeting: \(c.goal)\n" }
 
-        s += "\nCLIENT: \(c.clientTitle)\n"
-        for f in c.clientFieldList { s += "- \(f.label): \(clip(f.value, 1200))\n" }
+        if let t = c.meetingTitle { s += "Meeting planned in Aya: \(t)\n" }
+
+        if c.clientID != nil {
+            s += "\nCLIENT: \(c.clientTitle)\n"
+            for f in c.clientFieldList { s += "- \(f.label): \(clip(f.value, 1200))\n" }
+        }
+
+        if let p = c.projectTitle {
+            s += "\nPROJECT: \(p)\n"
+            for f in c.projectFieldList ?? [] { s += "- \(f.label): \(clip(f.value, 1200))\n" }
+        }
 
         if !c.contacts.isEmpty {
             s += "\nKNOWN CONTACTS AT THIS CLIENT (possible attendees):\n"
@@ -61,8 +71,8 @@ public enum AssistPrompts {
         }
 
         if let t = c.playbookTitle {
-            s += "\nPLAYBOOK: \(t)\n"
-            if let g = c.playbookGoal, !g.isEmpty { s += "Goal: \(g)\n" }
+            s += "\nMEETING TEMPLATE (agenda and questions; the checklist is the playbook): \(t)\n"
+            if let g = c.playbookGoal, !g.isEmpty { s += "Purpose: \(g)\n" }
             var section = ""
             for i in c.playbookItems {
                 if i.section != section { section = i.section; if !section.isEmpty { s += "\(section)\n" } }
@@ -71,7 +81,7 @@ public enum AssistPrompts {
         }
 
         if !c.recaps.isEmpty {
-            s += "\nEARLIER MEETINGS WITH THIS CLIENT (newest first):\n"
+            s += "\nEARLIER MEETINGS (newest first):\n"
             for r in c.recaps {
                 s += "• \(r.date) \(r.title)\n"
                 for f in r.fields { s += "  \(f.label): \(clip(f.value, 1500))\n" }

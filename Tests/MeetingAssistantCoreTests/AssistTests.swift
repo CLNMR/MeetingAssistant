@@ -128,15 +128,128 @@ import Testing
             AyaField(key: "summary__value", kind: .markdown, writable: true),
             AyaField(key: "meeting_date__value", kind: .datetime, writable: true),
             AyaField(key: "external_meeting_id__value", kind: .text, writable: true),
-            AyaField(key: "meeting_type__value", kind: .select, writable: true, options: ["customer"]),
+            AyaField(key: "meeting_type__value", kind: .select, writable: true, options: ["customer"]),   // from the template
+            AyaField(key: "status__value", kind: .select, writable: true, options: ["done"]),
             AyaField(key: "mood__value", kind: .select, writable: true),
             AyaField(key: "project__id", kind: .relation, writable: true),
         ])
         let keys = RecapBuilder.recapFields(s, config: AyaConfig()).map(\.key)
-        #expect(keys == ["title__value", "summary__value", "meeting_type__value"])
+        #expect(keys == ["title__value", "summary__value", "status__value"])
         let schema = RecapBuilder.objectSchema(RecapBuilder.recapFields(s, config: AyaConfig()))
         #expect(schema["required"]?.array?.count == 3)
-        #expect(schema["properties"]?["meeting_type__value"]?["enum"] == .array([.string("customer"), .null]))
+        #expect(schema["properties"]?["status__value"]?["enum"] == .array([.string("done"), .null]))
+    }
+}
+
+@Suite struct MeetingTargetTests {
+    static let schema = AyaListSchema(workspaceId: "W", techName: "pmMeetings", fields: [
+        AyaField(key: "title__value", kind: .text, writable: true),
+        AyaField(key: "summary__value", kind: .markdown, writable: true),
+        AyaField(key: "meeting_date__value", kind: .datetime, writable: true),
+        AyaField(key: "external_meeting_id__value", kind: .text, writable: true),
+        AyaField(key: "meeting_type__value", kind: .select, writable: true, options: ["customer", "internal"]),
+        AyaField(key: "customer__id", kind: .relation, writable: true),
+        AyaField(key: "project__id", kind: .relation, writable: true),
+        AyaField(key: "load_template__id", kind: .relation, writable: true),
+        AyaField(key: "participants__ids", kind: .relations, writable: true),
+    ])
+
+    static func record() -> AssistRecord {
+        var c = AssistIngestTests.context()
+        c.clientID = "C1"; c.clientTitle = "Acme"
+        c.projectID = "P1"; c.projectTitle = "P0001 – Acme rollout"
+        c.playbookID = "T1"; c.playbookTitle = "Projekt-Kickoff"
+        c.meetingType = "customer"
+        return AssistRecord(context: c, state: AssistState(), lines: [])
+    }
+
+    static func fields() -> [ProposedValue] {
+        [ProposedValue(key: "title__value", label: "Title", kind: .text, options: [], old: "", value: "Kickoff Acme", reason: nil, include: true),
+         ProposedValue(key: "summary__value", label: "Summary", kind: .markdown, options: [], old: "", value: "- went well", reason: nil, include: true)]
+    }
+
+    @Test func newMeetingGetsLinksTypeDateAndParticipants() {
+        let v = RecapBuilder.recapValues(Self.fields(), record: Self.record(), sessionID: "S", startedAt: Date(timeIntervalSince1970: 0),
+                                         schema: Self.schema, config: AyaConfig(), memberIDs: ["M1"])
+        #expect(v["customer__id"] == .string("C1"))
+        #expect(v["project__id"] == .string("P1"))
+        #expect(v["load_template__id"] == .string("T1"))
+        #expect(v["meeting_type__value"] == .string("customer"))
+        #expect(v["participants__ids"] == .array([.string("M1")]))
+        #expect(v["meeting_date__value"] == .string("1970-01-01T00:00:00Z"))
+        #expect(v["external_meeting_id__value"] == .string("meetingassistant:S"))
+        #expect(v["title__value"] == .string("Kickoff Acme"))
+    }
+
+    @Test func existingMeetingKeepsWhatItHas() {
+        let existing = AyaRecord(values: ["id": .string("X"), "title__value": .string("Kickoff (planned)"),
+                                          "customer__id": .string("C9"), "project__id": .null,
+                                          "meeting_date__value": .string("2026-11-10T09:00:00+00:00"),
+                                          "meeting_type__value": .string("internal"),
+                                          "participants__ids": .array([.string("M0")])])
+        // The planned title is kept unless the user ticks the title field.
+        var f = RecapBuilder.target(Self.fields(), existing: existing)
+        #expect(f[0].old == "Kickoff (planned)" && !f[0].include)
+        #expect(f[1].old.isEmpty && f[1].include)
+        f[0].include = false
+        let v = RecapBuilder.recapValues(f, record: Self.record(), sessionID: "S", startedAt: Date(),
+                                         schema: Self.schema, config: AyaConfig(), existing: existing, memberIDs: ["M1", "M0"])
+        #expect(v["title__value"] == nil)
+        #expect(v["summary__value"] == .string("- went well"))
+        #expect(v["customer__id"] == nil)                 // already linked elsewhere: left alone
+        #expect(v["project__id"] == .string("P1"))        // empty: filled
+        #expect(v["meeting_date__value"] == nil)
+        #expect(v["meeting_type__value"] == nil)
+        #expect(v["participants__ids"] == .array([.string("M0"), .string("M1")]))
+    }
+
+    @Test func membersMatchByFullOrUniqueFirstName() {
+        let members = [AyaRecord(values: ["id": .string("1"), "computedTitle": .string("Erika Musterfrau")]),
+                       AyaRecord(values: ["id": .string("2"), "computedTitle": .string("Lena Beispiel")]),
+                       AyaRecord(values: ["id": .string("3"), "computedTitle": .string("Max Muster")]),
+                       AyaRecord(values: ["id": .string("4"), "computedTitle": .string("Max Beispiel")])]
+        #expect(RecapBuilder.memberIDs(attendees: ["erika musterfrau", "Lena", "Max", "Someone Else"], members: members) == ["1", "2"])
+    }
+
+    @Test func titleFallsBackFromMeetingToClientAndTemplate() {
+        var c = Self.record().context
+        #expect(c.title == "Acme – Projekt-Kickoff")
+        c.clientID = nil
+        #expect(c.title == "P0001 – Acme rollout – Projekt-Kickoff")
+        c.meetingTitle = "Weekly"
+        #expect(c.title == "Weekly")
+    }
+
+    @Test func oldAssistRecordsStillLoad() throws {
+        // assist.json from before templates: clientID always set, no project/meeting keys.
+        var json = try JSONSerialization.jsonObject(with: JSONIO.encoder.encode(Self.record().context)) as! [String: Any]
+        for k in ["projectID", "projectTitle", "projectFieldList", "meetingID", "meetingTitle", "meetingType"] { json.removeValue(forKey: k) }
+        let c = try JSONIO.decoder.decode(AssistContext.self, from: JSONSerialization.data(withJSONObject: json))
+        #expect(c.clientID == "C1" && c.projectID == nil && c.meetingID == nil)
+    }
+}
+
+@Suite struct AyaConfigMigrationTests {
+    @Test func legacyConfigKeepsConnectionAndClientLists() {
+        let legacy = #"{"orgId":"ORG","contactsClientField":"firma__id","recapClientField":null,"lists":{"#
+            + #""clients":{"workspaceId":"W1","workspaceLabel":"CRM","techName":"firma","label":"Companies"},"#
+            + #""playbooks":{"workspaceId":"W2","workspaceLabel":"Wiki","techName":"wikiPlaybooks","label":"Playbooks"},"#
+            + #""recaps":{"workspaceId":"W3","workspaceLabel":"PM","techName":"pmMeetings","label":"Meetings"}}}"#
+        let c = AyaConfig.migrate(legacy: Data(legacy.utf8))
+        #expect(c.orgId == "ORG")
+        #expect(c.list(.clients)?.techName == "firma")
+        #expect(c.list(.meetings) == nil && c.list(.templates) == nil)   // picked again from Aya
+        #expect(c.lists["playbooks"] == nil && c.lists["recaps"] == nil)
+        #expect(!c.isComplete)
+        #expect(c.meetingClientField == "customer__id")
+    }
+
+    @Test func explicitNoLinkSurvivesSaving() throws {
+        var c = AyaConfig()
+        c.meetingProjectField = nil
+        let back = try JSONDecoder().decode(AyaConfig.self, from: JSONEncoder().encode(c))
+        #expect(back.meetingProjectField == nil)
+        #expect(back.meetingClientField == "customer__id")
     }
 }
 

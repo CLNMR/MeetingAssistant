@@ -6,6 +6,7 @@ public struct AssistRecord: Codable, Sendable {
     public var context: AssistContext
     public var state: AssistState
     public var lines: [AssistLine]
+    /// The Aya meeting the recap was written to (an existing one, or one created for it).
     public var recapRecordID: String?
     public var recapUploadedAt: Date?
     public var crmAppliedAt: Date?
@@ -69,7 +70,7 @@ public enum RecapBuilder {
 
     /// Fields Claude fills in: writable content fields except those the app sets itself.
     public static func recapFields(_ schema: AyaListSchema, config: AyaConfig) -> [AyaField] {
-        let appSet: Set<String> = [config.recapDateField, config.recapExternalIdField]
+        let appSet: Set<String> = [config.meetingDateField, config.meetingExternalIdField, config.meetingTypeField]
         return schema.writableContent.filter { f in
             !appSet.contains(f.key) && f.kind != .datetime && f.kind != .date && !(f.kind == .select && f.options.isEmpty)
         }
@@ -92,9 +93,11 @@ public enum RecapBuilder {
                         "required": .array(fields.map { .string($0.key) }), "additionalProperties": .bool(false)])
     }
 
-    /// Asks Claude for the recap fields. Returns one proposed value per field.
+    /// Asks Claude for the recap fields. Returns one proposed value per field. With `existing`
+    /// (the Aya meeting the recap goes to), its current values are shown and fields that already
+    /// have content are not overwritten unless the user ticks them.
     public static func draftRecap(binary: URL, model: String, record: AssistRecord, sessionID: String,
-                                  schema: AyaListSchema, config: AyaConfig) async throws -> [ProposedValue] {
+                                  schema: AyaListSchema, config: AyaConfig, existing: AyaRecord? = nil) async throws -> [ProposedValue] {
         let fields = recapFields(schema, config: config)
         guard !fields.isEmpty else { return [] }
         let transcript = transcriptLines(sessionID: sessionID, fallback: record.lines, myName: record.context.myName)
@@ -103,39 +106,80 @@ public enum RecapBuilder {
         for f in fields {
             prompt += "- \(f.key): \(f.label)\(f.kind == .markdown ? " — markdown" : "")\(f.kind == .select ? " — one of: \(f.options.joined(separator: ", "))" : "")\n"
         }
-        prompt += "The title should name the client and the topic. Attendee fields: names and roles of the external participants."
+        prompt += "The title should name the client or project and the topic. Attendee fields: names and roles of the external participants."
+        if let t = record.context.playbookTitle, !record.context.playbookItems.isEmpty {
+            prompt += " The meeting followed the template \"\(t)\"; where it fits, structure the summary along its agenda."
+        }
         let r = try await ClaudeCLI.oneShot(binary: binary, system: AssistPrompts.recapSystem, prompt: prompt,
                                             model: model, effort: "medium", schema: objectSchema(fields))
         guard let out = r.structured?.object else { throw ClaudeCLI.CLIError.failed("no structured recap returned") }
-        return fields.map { f in
+        let drafted = fields.map { f in
             let v = out[f.key] ?? .null
             return ProposedValue(key: f.key, label: f.label, kind: f.kind, options: f.options, old: "",
                                  value: v.isNull ? "" : v.description, reason: nil, include: !v.isEmpty)
         }
+        return target(drafted, existing: existing)
     }
 
-    /// Record values for uploading the recap: the reviewed fields plus what the app fills in.
+    /// Shows the target meeting's current values and decides what is written by default: a field
+    /// is ticked when the draft has something and the meeting has nothing there yet.
+    public static func target(_ fields: [ProposedValue], existing: AyaRecord?) -> [ProposedValue] {
+        fields.map { p in
+            var p = p
+            p.old = existing?[p.key].map { $0.isNull ? "" : $0.description } ?? ""
+            p.include = !p.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && p.old.isEmpty
+            return p
+        }
+    }
+
+    /// Record values for saving the recap: the reviewed fields plus what the app fills in. For an
+    /// existing meeting, links, date and type are only filled where the meeting has none yet, and
+    /// team members are added to its participants.
     public static func recapValues(_ fields: [ProposedValue], record: AssistRecord, sessionID: String, startedAt: Date,
-                                   schema: AyaListSchema, config: AyaConfig) -> [String: JSONValue] {
+                                   schema: AyaListSchema, config: AyaConfig, existing: AyaRecord? = nil,
+                                   memberIDs: [String] = []) -> [String: JSONValue] {
         var values: [String: JSONValue] = [:]
         for p in fields where p.include {
             if let v = schema.coerce(.string(p.value), for: p.key) { values[p.key] = v }
         }
-        if schema.field(config.recapDateField) != nil { values[config.recapDateField] = .string(AyaText.iso(startedAt)) }
-        if schema.field(config.recapExternalIdField) != nil { values[config.recapExternalIdField] = .string("meetingassistant:\(sessionID)") }
-        if schema.field(config.recapTitleField) != nil, (values[config.recapTitleField]?.isEmpty ?? true) {
-            values[config.recapTitleField] = .string("\(record.context.clientTitle) – \(record.context.playbookTitle ?? "Meeting")")
+        func isEmpty(_ key: String) -> Bool { existing?[key].map { $0.isEmpty } ?? true }
+        func fill(_ key: String, _ v: JSONValue) {
+            if schema.field(key) != nil, values[key] == nil, isEmpty(key) { values[key] = v }
         }
-        if let link = config.recapClientField, let f = schema.field(link) {
-            values[link] = f.kind == .relations ? .array([.string(record.context.clientID)]) : .string(record.context.clientID)
+        let c = record.context
+        fill(config.meetingDateField, .string(AyaText.iso(startedAt)))
+        fill(config.meetingExternalIdField, .string("meetingassistant:\(sessionID)"))
+        fill(config.meetingTitleField, .string(c.title))
+        if let t = c.meetingType, schema.coerce(.string(t), for: config.meetingTypeField) != nil { fill(config.meetingTypeField, .string(t)) }
+        func link(_ key: String?, _ id: String?) {
+            guard let key, let id, let f = schema.field(key) else { return }
+            fill(key, f.kind == .relations ? .array([.string(id)]) : .string(id))
         }
-        if let link = config.recapContactsField, let f = schema.field(link) {
-            let ids = Array(Set(record.state.attendees.compactMap(\.contactID) + record.createdContactIDs)).sorted()
-            if !ids.isEmpty {
-                values[link] = f.kind == .relations ? .array(ids.map { .string($0) }) : .string(ids[0])
-            }
+        link(config.meetingClientField, c.clientID)
+        link(config.meetingProjectField, c.projectID)
+        link(config.meetingTemplateField, c.playbookID)
+        if let key = config.meetingParticipantsField, let f = schema.field(key), !memberIDs.isEmpty {
+            let current = existing?.linkedIDs(key) ?? []
+            let all = current + memberIDs.filter { !current.contains($0) }
+            if all != current { values[key] = f.kind == .relations ? .array(all.map { .string($0) }) : .string(all[0]) }
         }
         return values
+    }
+
+    /// Team members among the attendees (and the user), matched by name.
+    public static func memberIDs(attendees: [String], members: [AyaRecord]) -> [String] {
+        func norm(_ s: String) -> String {
+            s.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+                .components(separatedBy: .whitespaces).filter { !$0.isEmpty }.joined(separator: " ")
+        }
+        var out: [String] = []
+        for a in attendees.map(norm) where !a.isEmpty {
+            // Full name, or a first name that matches exactly one member.
+            let full = members.filter { norm($0.title) == a }
+            let first = members.filter { norm($0.title).hasPrefix(a + " ") }
+            if let m = full.first ?? (first.count == 1 ? first[0] : nil), !out.contains(m.id) { out.append(m.id) }
+        }
+        return out
     }
 
     // MARK: CRM
@@ -246,8 +290,11 @@ public enum RecapBuilder {
     }
 
     static func contextText(_ r: AssistRecord) -> String {
-        var s = "CLIENT: \(r.context.clientTitle)\n"
-        if let p = r.context.playbookTitle { s += "PLAYBOOK: \(p)\n" }
+        var s = ""
+        if r.context.clientID != nil { s += "CLIENT: \(r.context.clientTitle)\n" }
+        if let p = r.context.projectTitle { s += "PROJECT: \(p)\n" }
+        if let m = r.context.meetingTitle { s += "MEETING: \(m)\n" }
+        if let p = r.context.playbookTitle { s += "TEMPLATE: \(p)\n" }
         if !r.context.goal.isEmpty { s += "GOAL: \(r.context.goal)\n" }
         s += "USER (\"Me\" in the transcript): \(r.context.myName)\n"
         s += "\nATTENDEES:\n" + r.state.attendees.map { "- \($0.name)\($0.role.map { ", \($0)" } ?? "")\($0.company.map { ", \($0)" } ?? "")" }.joined(separator: "\n")

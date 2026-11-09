@@ -30,15 +30,18 @@ final class AssistController: ObservableObject {
 
     // Pickers
     @Published var clients: [AyaRecord] = AyaCache.list(.clients)?.records ?? []
-    @Published var playbooks: [AyaRecord] = AyaCache.list(.playbooks)?.records ?? []
+    @Published var projects: [AyaRecord] = AyaCache.list(.projects)?.records ?? []
+    @Published var templates: [AyaRecord] = AyaCache.list(.templates)?.records ?? []
+    @Published var members: [AyaRecord] = AyaCache.list(.members)?.records ?? []
+    @Published var upcoming: [AyaRecord] = []
     @Published var listsFetchedAt: Date? = AyaCache.list(.clients)?.fetchedAt
     @Published var listState: StepState = .idle
 
-    // Preparation
+    // Preparation: a planned meeting from Aya, or template / client / project chosen freely.
+    @Published var meetingID: String? { didSet { if meetingID != oldValue { meetingChosen() } } }
     @Published var clientID: String? { didSet { if clientID != oldValue { loadPreview() } } }
-    @Published var playbookID: String? = UserDefaults.standard.string(forKey: "assist.lastPlaybook") {
-        didSet { UserDefaults.standard.set(playbookID, forKey: "assist.lastPlaybook") }
-    }
+    @Published var projectID: String? { didSet { if projectID != oldValue { loadPreview() } } }
+    @Published var templateID: String? { didSet { if templateID != oldValue { loadPreview() } } }
     @Published var goal = ""
     @Published var mode: MeetingMode = .call
     @Published var preview: AyaMeetingContext?
@@ -63,6 +66,11 @@ final class AssistController: ObservableObject {
 
     // Review
     @Published var record: AssistRecord?
+    /// Where the recap goes: an existing Aya meeting, or nil for a new one.
+    @Published var targetMeetingID: String?
+    @Published var targetRecord: AyaRecord?
+    /// Meetings in Aya on the recording's day, to attach the recap to.
+    @Published var dayMeetings: [AyaRecord] = []
     @Published var recapFields: [ProposedValue] = []
     @Published var recapState: StepState = .idle
     @Published var crm: CRMProposal?
@@ -71,8 +79,27 @@ final class AssistController: ObservableObject {
 
     init(app: AppState) {
         self.app = app
-        if config.orgId.isEmpty == false, clients.isEmpty, hasAPIKey { Task { await refreshLists() } }
-        if playbookID == nil, playbooks.count == 1 { playbookID = playbooks[0].id }
+        guard !config.orgId.isEmpty, hasAPIKey else { return }
+        if !config.isComplete || templates.isEmpty {
+            // First start after meeting templates were introduced: pick the new lists.
+            Task { await upgradeLists() }
+        } else {
+            Task { await refreshLists() }
+        }
+    }
+
+    /// Fills in lists that are not chosen yet (and follows lists that moved workspace).
+    func upgradeLists() async {
+        guard let svc = service else { return }
+        connectState = .working("Updating the Aya lists…")
+        do {
+            config = try await svc.autoSelectLists()
+            schemas = try await AyaService(config: config, client: svc.client).refreshSchemas()
+            await refreshLists()
+            connectState = .done(nil)
+        } catch {
+            connectState = .failed(error.localizedDescription)
+        }
     }
 
     var isConnected: Bool { hasAPIKey && config.isComplete }
@@ -100,10 +127,10 @@ final class AssistController: ObservableObject {
             config = cfg
             connectState = .working("Reading the lists' fields…")
             schemas = try await AyaService(config: cfg, client: client).refreshSchemas()
-            connectState = .working("Loading clients and playbooks…")
+            connectState = .working("Loading clients, projects and templates…")
             await refreshLists()
             await loadCatalog()
-            connectState = .done("Connected. \(clients.count) clients, \(playbooks.count) playbooks.")
+            connectState = .done("Connected. \(clients.count) clients, \(projects.count) projects, \(templates.count) templates.")
         } catch {
             connectState = .failed(error.localizedDescription)
         }
@@ -113,7 +140,7 @@ final class AssistController: ObservableObject {
         AyaConfig.setAPIKey(nil)
         hasAPIKey = false
         AyaCache.clear()
-        clients = []; playbooks = []; schemas = [:]
+        clients = []; projects = []; templates = []; members = []; upcoming = []; schemas = [:]
         connectState = .idle
     }
 
@@ -138,12 +165,11 @@ final class AssistController: ObservableObject {
         guard let ws else { return }
         config.setList(slot, AyaListRef(workspaceId: ws.id, workspaceLabel: ws.label, techName: spec.techName, label: spec.label))
         if slot == .contacts { config.contactsClientField = nil }
-        if slot == .recaps { config.recapClientField = nil; config.recapContactsField = nil }
         await refreshSchemas()
         if slot == .contacts, let link = schemas[AyaSlot.contacts.rawValue]?.relations.first(where: { $0.kind == .relation && $0.name.contains("firm") }) {
             config.contactsClientField = link.key
         }
-        if slot == .clients || slot == .playbooks { await refreshLists() }
+        if slot != .contacts { await refreshLists() }
     }
 
     func refreshSchemas() async {
@@ -158,14 +184,23 @@ final class AssistController: ObservableObject {
         listState = .working("Loading from Aya…")
         do {
             clients = try await svc.refreshList(.clients)
-            playbooks = try await svc.refreshList(.playbooks)
+            templates = try await svc.refreshList(.templates)
+            if config.list(.projects) != nil { projects = try await svc.refreshList(.projects) }
+            if config.list(.members) != nil { members = (try? await svc.refreshList(.members)) ?? members }
+            upcoming = try await svc.upcomingMeetings()
             listsFetchedAt = Date()
             listState = .done(nil)
-            if let p = playbookID, !playbooks.contains(where: { $0.id == p }) { playbookID = nil }
-            if playbookID == nil, playbooks.count == 1 { playbookID = playbooks[0].id }
+            if let t = templateID, !templates.contains(where: { $0.id == t }) { templateID = nil }
+            if let m = meetingID, !upcoming.contains(where: { $0.id == m }) { meetingID = nil }
         } catch {
             listState = .failed(error.localizedDescription)
         }
+    }
+
+    /// Just the planned meetings (cheap; done each time the preparation screen opens).
+    func refreshUpcoming() async {
+        guard let svc = service, config.list(.meetings) != nil else { return }
+        if let u = try? await svc.upcomingMeetings() { upcoming = u }
     }
 
     /// Server-side search, for clients not in the cached list.
@@ -196,17 +231,31 @@ final class AssistController: ObservableObject {
 
     // MARK: - Preparation
 
+    var plannedMeeting: AyaRecord? { meetingID.flatMap { id in upcoming.first { $0.id == id } } }
+
+    /// Picking a planned meeting takes over its client, project and template.
+    private func meetingChosen() {
+        if let m = plannedMeeting {
+            clientID = config.meetingClientField.flatMap { m.linkedID($0) }
+            projectID = config.meetingProjectField.flatMap { m.linkedID($0) }
+            templateID = config.meetingTemplateField.flatMap { m.linkedID($0) }
+        }
+        loadPreview()
+    }
+
+    private var selectionKey: [String?] { [meetingID, clientID, projectID, templateID] }
+
     private func loadPreview() {
         previewTask?.cancel()
-        preview = nil
-        guard let id = clientID, let svc = service else { previewState = .idle; return }
-        previewState = .working("Loading client…")
+        let key = selectionKey
+        guard key.contains(where: { $0 != nil }), let svc = service else { preview = nil; previewState = .idle; return }
+        previewState = .working("Loading from Aya…")
         previewTask = Task {
             try? await Task.sleep(nanoseconds: 300_000_000)
             guard !Task.isCancelled else { return }
             do {
-                let ctx = try await svc.meetingContext(clientID: id, playbookID: nil)
-                guard !Task.isCancelled, clientID == id else { return }
+                let ctx = try await svc.meetingContext(meetingID: key[0], clientID: key[1], projectID: key[2], templateID: key[3])
+                guard !Task.isCancelled, selectionKey == key else { return }
                 preview = ctx
                 previewState = .done(nil)
             } catch {
@@ -216,27 +265,25 @@ final class AssistController: ObservableObject {
         }
     }
 
-    var canStart: Bool { clientID != nil && claudeReady && !app.isRecording && phase == .prepare && !startState.isWorking }
+    var canStart: Bool { claudeReady && !app.isRecording && phase == .prepare && !startState.isWorking && !previewState.isWorking }
 
     func start() async {
-        guard let clientID, let svc = service else { return }
+        guard let svc = service else { return }
         guard let binary = claudeBinary, claudeReady else { startState = .failed("Claude Code is not ready."); return }
         startState = .working("Loading the meeting context from Aya…")
         do {
-            var aya: AyaMeetingContext
-            if let p = preview, p.client.id == clientID { aya = p } else {
-                aya = try await svc.meetingContext(clientID: clientID, playbookID: nil)
-            }
-            if let pid = playbookID, let ref = config.list(.playbooks) {
-                aya.playbook = try await svc.client.record(workspace: ref.workspaceId, list: ref.techName, id: pid)
-            }
+            let aya: AyaMeetingContext
+            if let p = preview, selectionKey.contains(where: { $0 != nil }) { aya = p }
+            else if selectionKey.contains(where: { $0 != nil }) {
+                aya = try await svc.meetingContext(meetingID: meetingID, clientID: clientID, projectID: projectID, templateID: templateID)
+            } else { aya = AyaMeetingContext() }
             let me = app.prefs.myName.trimmingCharacters(in: .whitespaces)
             let ctx = AssistContext(aya: aya, config: config, goal: goal, mode: mode, myName: me.isEmpty ? "Me" : me, date: Date())
             context = ctx
 
             startState = .working("Starting the recording…")
             app.recordingMode = mode
-            app.recordingTitle = ctx.clientTitle + (ctx.playbookTitle.map { " – \($0)" } ?? "")
+            app.recordingTitle = ctx.title
             app.forceLive = true
             app.liveLinesHook = { [weak self] lines in self?.ingest(lines) }
             app.onRecordingStopped = { [weak self] id in self?.recordingStopped(id) }
@@ -317,10 +364,47 @@ final class AssistController: ObservableObject {
         context = rec.context
         crm = nil; crmState = .idle
         recapFields = []
-        recapState = rec.recapRecordID != nil ? .done("Uploaded to Aya.") : .idle
+        recapState = rec.recapRecordID != nil ? .done("Saved in Aya.") : .idle
+        dayMeetings = []
+        targetRecord = nil
+        targetMeetingID = rec.recapRecordID ?? rec.context.meetingID
         phase = .review(id)
         app.appMode = .assist
+        loadTargets(id)
         waitForTranscriptThenDraft(id)
+    }
+
+    /// The meetings in Aya on the recording's day, and the current target meeting.
+    private func loadTargets(_ id: String) {
+        guard let svc = service else { return }
+        let day = app.sessions.first { $0.id == id }?.startedAt ?? record?.context.date ?? Date()
+        Task {
+            dayMeetings = (try? await svc.meetings(onDayOf: day)) ?? []
+            await loadTargetRecord()
+        }
+    }
+
+    private func loadTargetRecord() async {
+        guard let id = targetMeetingID else { targetRecord = nil; return }
+        var r = dayMeetings.first { $0.id == id }
+        if r == nil { r = try? await service?.record(.meetings, id: id) }
+        guard targetMeetingID == id else { return }
+        targetRecord = r
+        if !recapFields.isEmpty { recapFields = RecapBuilder.target(recapFields, existing: r) }
+    }
+
+    /// Choose where the recap is saved: an existing meeting or a new one.
+    func setTarget(_ id: String?) {
+        targetMeetingID = id
+        if id == nil { targetRecord = nil; recapFields = RecapBuilder.target(recapFields, existing: nil); return }
+        Task { await loadTargetRecord() }
+    }
+
+    /// Choices for the target, the planned meeting and the one already written first.
+    var targetChoices: [AyaRecord] {
+        var out: [AyaRecord] = []
+        for r in [targetRecord].compactMap({ $0 }) + dayMeetings where !out.contains(where: { $0.id == r.id }) { out.append(r) }
+        return out
     }
 
     /// The recap uses the final transcript, so wait for transcription first (falls back to the live one).
@@ -341,12 +425,14 @@ final class AssistController: ObservableObject {
 
     func draftRecap() async {
         guard let id = reviewSessionID, let rec = record else { return }
-        guard let schema = schemas[AyaSlot.recaps.rawValue] else { recapState = .failed("Connect Aya in Settings › Assist first."); return }
+        guard let schema = schemas[AyaSlot.meetings.rawValue] else { recapState = .failed("Connect Aya in Settings › Assist first."); return }
         if claudeBinary == nil { await checkClaude() }
         guard let b = claudeBinary else { recapState = .failed(ClaudeCLI.CLIError.notInstalled.errorDescription!); return }
         recapState = .working("Claude is writing the recap…")
         do {
-            recapFields = try await RecapBuilder.draftRecap(binary: b, model: settings.model, record: rec, sessionID: id, schema: schema, config: config)
+            if targetMeetingID != nil, targetRecord == nil { await loadTargetRecord() }
+            recapFields = try await RecapBuilder.draftRecap(binary: b, model: settings.model, record: rec, sessionID: id, schema: schema,
+                                                            config: config, existing: targetRecord)
             recapState = .idle
         } catch {
             recapState = .failed(error.localizedDescription)
@@ -354,22 +440,31 @@ final class AssistController: ObservableObject {
     }
 
     func uploadRecap() async {
-        guard let id = reviewSessionID, var rec = record, let svc = service, let ref = config.list(.recaps),
-              let schema = schemas[AyaSlot.recaps.rawValue] else { return }
+        guard let id = reviewSessionID, var rec = record, let svc = service, let ref = config.list(.meetings),
+              let schema = schemas[AyaSlot.meetings.rawValue] else { return }
         let started = app.sessions.first { $0.id == id }?.startedAt ?? rec.context.date
-        let values = RecapBuilder.recapValues(recapFields, record: rec, sessionID: id, startedAt: started, schema: schema, config: config)
-        recapState = .working("Uploading to Aya…")
+        let people = [rec.context.myName] + rec.state.attendees.filter { $0.present != false }.map(\.name)
+        let memberIDs = RecapBuilder.memberIDs(attendees: people, members: members)
+        recapState = .working("Saving in Aya…")
         do {
-            if let existing = rec.recapRecordID {
-                _ = try await svc.client.update(workspace: ref.workspaceId, list: ref.techName, id: existing, values: values)
+            if let target = targetMeetingID {
+                let current = try await svc.record(.meetings, id: target)
+                let values = RecapBuilder.recapValues(recapFields, record: rec, sessionID: id, startedAt: started, schema: schema,
+                                                      config: config, existing: current, memberIDs: memberIDs)
+                targetRecord = try await svc.client.update(workspace: ref.workspaceId, list: ref.techName, id: target, values: values)
+                rec.recapRecordID = target
             } else {
+                let values = RecapBuilder.recapValues(recapFields, record: rec, sessionID: id, startedAt: started, schema: schema,
+                                                      config: config, memberIDs: memberIDs)
                 let created = try await svc.client.create(workspace: ref.workspaceId, list: ref.techName, values: values)
                 rec.recapRecordID = created.id
+                targetMeetingID = created.id
+                targetRecord = created
             }
             rec.recapUploadedAt = Date()
             try? rec.save(id)
             record = rec
-            recapState = .done("Recap saved in Aya (\(ref.label)).")
+            recapState = .done("Saved in Aya: “\(targetRecord?.title ?? "meeting")” (\(ref.label)).")
         } catch {
             recapState = .failed(error.localizedDescription)
         }
@@ -378,11 +473,12 @@ final class AssistController: ObservableObject {
     func proposeCRM() async {
         guard let id = reviewSessionID, let rec = record, let svc = service,
               let cRef = config.list(.clients), let cs = schemas[AyaSlot.clients.rawValue] else { return }
+        guard let clientID = rec.context.clientID else { crmState = .done("This meeting has no client."); return }
         if claudeBinary == nil { await checkClaude() }
         guard let b = claudeBinary else { crmState = .failed(ClaudeCLI.CLIError.notInstalled.errorDescription!); return }
         crmState = .working("Claude is reading the CRM records and the transcript…")
         do {
-            let client = try await svc.client.record(workspace: cRef.workspaceId, list: cRef.techName, id: rec.context.clientID)
+            let client = try await svc.client.record(workspace: cRef.workspaceId, list: cRef.techName, id: clientID)
             var contacts: [AyaRecord] = []
             if let pRef = config.list(.contacts) {
                 for c in rec.context.contacts {
@@ -398,7 +494,8 @@ final class AssistController: ObservableObject {
     }
 
     func applyCRM() async {
-        guard let id = reviewSessionID, var rec = record, let p = crm, let svc = service, let cRef = config.list(.clients) else { return }
+        guard let id = reviewSessionID, var rec = record, let p = crm, let svc = service, let cRef = config.list(.clients),
+              let clientID = rec.context.clientID else { return }
         crmState = .working("Writing to Aya…")
         var done: [String] = []
         do {
@@ -406,7 +503,7 @@ final class AssistController: ObservableObject {
                 var values: [String: JSONValue] = [:]
                 for c in p.client where c.include { if let v = cs.coerce(.string(c.value), for: c.key) { values[c.key] = v } }
                 if !values.isEmpty {
-                    _ = try await svc.client.update(workspace: cRef.workspaceId, list: cRef.techName, id: rec.context.clientID, values: values)
+                    _ = try await svc.client.update(workspace: cRef.workspaceId, list: cRef.techName, id: clientID, values: values)
                     done.append("\(values.count) client field\(values.count == 1 ? "" : "s")")
                 }
             }
@@ -420,7 +517,7 @@ final class AssistController: ObservableObject {
                         _ = try await svc.client.update(workspace: pRef.workspaceId, list: pRef.techName, id: cid, values: values)
                         updated += 1
                     } else {
-                        if let link = config.contactsClientField { values[link] = .string(rec.context.clientID) }
+                        if let link = config.contactsClientField { values[link] = .string(clientID) }
                         let r = try await svc.client.create(workspace: pRef.workspaceId, list: pRef.techName, values: values)
                         rec.createdContactIDs.append(r.id)
                         created += 1
@@ -445,7 +542,9 @@ final class AssistController: ObservableObject {
         record = nil; recapFields = []; crm = nil
         recapState = .idle; crmState = .idle
         state = AssistState(); status = .idle
-        clientID = nil; goal = ""
+        meetingID = nil; clientID = nil; projectID = nil; templateID = nil; goal = ""
+        targetMeetingID = nil; targetRecord = nil; dayMeetings = []
+        Task { await refreshUpcoming() }
     }
 }
 
