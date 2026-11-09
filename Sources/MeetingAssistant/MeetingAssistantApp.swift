@@ -1,16 +1,17 @@
-import MeetingScribeCore
+import MeetingAssistantCore
 import SwiftUI
 
 @main
-struct MeetingScribeApp: App {
+struct MeetingAssistantApp: App {
     @StateObject private var state = AppState()
 
     var body: some Scene {
-        WindowGroup("MeetingScribe", id: "main") {
+        WindowGroup("MeetingAssistant", id: "main") {
             ContentView()
                 .environmentObject(state)
-                .frame(minWidth: 900, minHeight: 600)
+                .frame(minWidth: 980, minHeight: 620)
         }
+        .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(after: .newItem) {
                 Button(state.isRecording ? "Stop Recording" : "Start Recording") {
@@ -22,10 +23,15 @@ struct MeetingScribeApp: App {
                 Button("Floating Live Transcript") { state.floating.toggle() }
                     .keyboardShortcut("l", modifiers: [.command, .shift])
             }
+            CommandGroup(before: .sidebar) {
+                Button("Scribe") { state.appMode = .scribe }.keyboardShortcut("1", modifiers: [.command])
+                Button("Assist") { state.appMode = .assist }.keyboardShortcut("2", modifiers: [.command])
+                Divider()
+            }
         }
 
         Settings {
-            SettingsView().environmentObject(state)
+            SettingsView().environmentObject(state).tint(Aya.primary)
         }
 
         MenuBarExtra {
@@ -62,7 +68,7 @@ struct MenuBarContent: View {
         }
         Divider()
         Button("Floating Live Transcript") { state.floating.toggle() }
-        Button("Open MeetingScribe") {
+        Button("Open MeetingAssistant") {
             openWindow(id: "main")
             NSApp.activate(ignoringOtherApps: true)
         }

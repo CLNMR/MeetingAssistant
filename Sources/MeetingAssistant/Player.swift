@@ -1,5 +1,5 @@
 import AVFoundation
-import MeetingScribeCore
+import MeetingAssistantCore
 import SwiftUI
 
 /// Plays the session's tracks together (mic + call audio), kept in sync.

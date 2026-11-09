@@ -85,7 +85,7 @@ public final class SystemAudioTap: @unchecked Sendable {
         let excluded = Self.ownProcessObject().map { [$0] } ?? []
         let desc = CATapDescription(stereoGlobalTapButExcludeProcesses: excluded)
         desc.uuid = UUID()
-        desc.name = "MeetingScribe system audio"
+        desc.name = "MeetingAssistant system audio"
         desc.isPrivate = true
         desc.muteBehavior = muted ? .muted : .unmuted
 
@@ -94,7 +94,7 @@ public final class SystemAudioTap: @unchecked Sendable {
         tapID = tap
 
         let aggregateDesc: [String: Any] = [
-            kAudioAggregateDeviceNameKey: "MeetingScribe Tap",
+            kAudioAggregateDeviceNameKey: "MeetingAssistant Tap",
             kAudioAggregateDeviceUIDKey: "de.local.MeetingScribe.tap.\(UUID().uuidString)",
             kAudioAggregateDeviceMainSubDeviceKey: outputUID,
             kAudioAggregateDeviceIsPrivateKey: true,

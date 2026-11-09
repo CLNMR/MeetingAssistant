@@ -1,6 +1,6 @@
 import AVFoundation
 import CoreAudio
-import MeetingScribeCore
+import MeetingAssistantCore
 import SwiftUI
 
 struct SettingsView: View {
@@ -11,9 +11,13 @@ struct SettingsView: View {
             DictationSettings().tabItem { Label("Dictation", systemImage: "keyboard") }
             VoiceSettings().tabItem { Label("Voices", systemImage: "person.wave.2") }
             ModelSettings().tabItem { Label("Models", systemImage: "cpu") }
+            AssistSettingsView(assist: state.assist).tabItem { Label("Assist", systemImage: "sparkles") }
         }
         .environmentObject(state)
-        .frame(width: 560, height: 470)
+        .scrollContentBackground(.hidden)
+        .background(Aya.page)
+        .tint(Aya.primary)
+        .frame(width: 620, height: 560)
     }
 }
 
@@ -22,16 +26,16 @@ struct GeneralSettings: View {
     var body: some View {
         Form {
             TextField("Your name", text: $state.prefs.myName, prompt: Text("Me"))
-            Picker("Default meeting type", selection: $state.prefs.defaultMode) {
-                ForEach(MeetingMode.allCases) { Text($0.title).tag($0) }
+            LabeledContent("Default meeting type") {
+                AyaSelect(selection: $state.prefs.defaultMode, options: MeetingMode.allCases.map { ($0, $0.title) }).frame(maxWidth: 240)
             }
             Toggle("Show live transcript while recording", isOn: $state.prefs.liveTranscription)
             Toggle("Create full transcript automatically after recording", isOn: $state.prefs.autoTranscribe)
-            Picker("Transcription engine", selection: $state.prefs.engine) {
-                ForEach(ASREngineKind.allCases) { Text($0.title).tag($0) }
+            LabeledContent("Transcription engine") {
+                AyaSelect(selection: $state.prefs.engine, options: ASREngineKind.allCases.map { ($0, $0.title) }).frame(maxWidth: 240)
             }
-            Picker("Language", selection: $state.prefs.language) {
-                ForEach(TranscriptLanguage.allCases) { Text($0.title).tag($0) }
+            LabeledContent("Language") {
+                AyaSelect(selection: $state.prefs.language, options: TranscriptLanguage.allCases.map { ($0, $0.title) }).frame(maxWidth: 240)
             }
             Text("“Automatic” handles meetings that switch between German and English.")
                 .font(.caption).foregroundStyle(.secondary)
@@ -72,7 +76,7 @@ private struct DictationSettingsForm: View {
             Section("Permission") {
                 LabeledContent("Accessibility") {
                     if dictation.isTrusted {
-                        Label("Allowed", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                        Label("Allowed", systemImage: "checkmark.circle.fill").foregroundStyle(Aya.success)
                     } else {
                         Button("Allow…") {
                             dictation.requestAccessibility()
@@ -141,7 +145,7 @@ struct VoiceSettings: View {
     var body: some View {
         Form {
             Section("Your voice") {
-                Text("For in-person meetings MeetingScribe recognises you by your voice. Record about 20 seconds once.")
+                Text("For in-person meetings MeetingAssistant recognises you by your voice. Record about 20 seconds once.")
                     .font(.callout).foregroundStyle(.secondary)
                 if let v = voiceprint {
                     LabeledContent("Voice sample") {
@@ -165,7 +169,7 @@ struct VoiceSettings: View {
             }
             Section("Remembered voices") {
                 if library.entries.isEmpty {
-                    Text("When you rename a speaker in a transcript, MeetingScribe remembers the voice and names that person automatically next time.")
+                    Text("When you rename a speaker in a transcript, MeetingAssistant remembers the voice and names that person automatically next time.")
                         .font(.callout).foregroundStyle(.secondary)
                 }
                 ForEach(library.entries, id: \.name) { e in

@@ -1,7 +1,7 @@
 import AppKit
 import AVFoundation
 import CoreAudio
-import MeetingScribeCore
+import MeetingAssistantCore
 import SwiftUI
 
 struct Preferences: Codable, Equatable {
@@ -67,6 +67,14 @@ struct Preferences: Codable, Equatable {
 
 enum Selection: Hashable { case recorder, session(String) }
 
+/// The two halves of the app: Scribe (local recording and transcription) and Assist (live meeting assistant).
+enum AppMode: String, CaseIterable, Identifiable {
+    case scribe, assist
+    var id: String { rawValue }
+    var title: String { self == .scribe ? "Scribe" : "Assist" }
+    var icon: String { self == .scribe ? "waveform" : "sparkles" }
+}
+
 struct JobProgress: Equatable { var fraction: Double; var message: String }
 
 @MainActor
@@ -81,6 +89,9 @@ final class AppState: ObservableObject {
         }
     }
     @Published var sessions: [SessionInfo] = []
+    @Published var appMode = AppMode(rawValue: UserDefaults.standard.string(forKey: "appMode") ?? "") ?? .scribe {
+        didSet { UserDefaults.standard.set(appMode.rawValue, forKey: "appMode") }
+    }
     @Published var selection: Selection? = .recorder
     @Published var errorMessage: String?
 
@@ -110,6 +121,13 @@ final class AppState: ObservableObject {
     let listen = ListenController()
     lazy var floating = FloatingPanelController(state: self)
 
+    // Assist mode
+    lazy var assist = AssistController(app: self)
+    /// Set by Assist: live transcription is on regardless of the preference, and lines go to the assistant.
+    var forceLive = false
+    var liveLinesHook: (([LiveLine]) -> Void)?
+    var onRecordingStopped: ((String) -> Void)?
+
     private var recorder: SessionRecorder?
     private var live: LiveTranscriber?
     private var meterTimer: Timer?
@@ -130,6 +148,16 @@ final class AppState: ObservableObject {
         reload()
         setUpDictation()
         listen.state = self
+        if let dir = UserDefaults.standard.string(forKey: "assistSnapshot") {
+            // Debug: render the Assist screens with sample data to PNGs and quit (used for testing).
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                guard let self else { return }
+                AssistSnapshots.run(app: self, dir: URL(fileURLWithPath: dir),
+                                    record: UserDefaults.standard.string(forKey: "assistSnapshotRecord").map { URL(fileURLWithPath: $0) })
+                exit(0)
+            }
+            return
+        }
         if UserDefaults.standard.bool(forKey: FloatingPanelController.openKey) {
             DispatchQueue.main.async { [weak self] in self?.floating.show() }
         }
@@ -177,7 +205,7 @@ final class AppState: ObservableObject {
     func startRecording() async {
         guard !isRecording else { return }
         guard await Permissions.requestMicrophone() else {
-            errorMessage = "MeetingScribe has no access to the microphone. Allow it in System Settings › Privacy & Security › Microphone, then try again."
+            errorMessage = "MeetingAssistant has no access to the microphone. Allow it in System Settings › Privacy & Security › Microphone, then try again."
             return
         }
         do {
@@ -187,12 +215,13 @@ final class AppState: ObservableObject {
                                           language: prefs.language == .auto ? nil : prefs.language.rawValue)
             liveLines = []
             await listen.recordingWillStart()   // the recording takes over the microphone
-            if prefs.liveTranscription || listen.isListening {
+            if prefs.liveTranscription || listen.isListening || forceLive {
                 let seg = listen.beginRecordingSegment(start: rec.info.startedAt, mode: recordingMode)
                 let lt = LiveTranscriber(mode: recordingMode) { lines in
                     Task { @MainActor [weak self] in
                         self?.liveLines = lines
                         self?.listen.update(seg, lines: lines)
+                        self?.liveLinesHook?(lines)
                     }
                 }
                 await lt.start(tracks: rec.info.tracks)
@@ -229,6 +258,9 @@ final class AppState: ObservableObject {
     /// for when the user forgot to stop.
     func stopRecording(keepUntil: Double? = nil) async {
         guard let rec = recorder else { return }
+        let assisted = forceLive
+        forceLive = false
+        liveLinesHook = nil
         meterTimer?.invalidate(); meterTimer = nil
         isRecording = false
         micLevel = 0; systemLevel = 0
@@ -246,10 +278,13 @@ final class AppState: ObservableObject {
             }
             reload()
             selection = .session(info.id)
-            if prefs.autoTranscribe { enqueue(info.id) }
+            // Assist needs the final transcript for the recap.
+            if prefs.autoTranscribe || assisted { enqueue(info.id) }
+            onRecordingStopped?(info.id)
         } catch {
             errorMessage = "Could not finish recording: \(error.localizedDescription)"
             await listen.recordingDidStop()
+            onRecordingStopped?("")
         }
     }
 
@@ -344,6 +379,17 @@ final class AppState: ObservableObject {
     func split(_ id: String, at time: Double) {
         do {
             let second = try SessionEdit.split(id, at: time)
+            reload()
+            selection = .session(second.id)
+        } catch {
+            errorMessage = "Could not split: \(error.localizedDescription)"
+            reload()
+        }
+    }
+
+    func split(_ id: String, at pause: Pause, removePause: Bool) {
+        do {
+            let second = try SessionEdit.split(id, at: pause, removePause: removePause)
             reload()
             selection = .session(second.id)
         } catch {

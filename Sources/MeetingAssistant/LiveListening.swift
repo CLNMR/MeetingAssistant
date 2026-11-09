@@ -1,6 +1,6 @@
 import AppKit
 import CoreAudio
-import MeetingScribeCore
+import MeetingAssistantCore
 import SwiftUI
 
 /// One stretch of live transcript with its own time origin: a listening segment
@@ -306,12 +306,13 @@ struct FloatingTranscriptView: View {
                 .padding(.leading, 70)    // room for the window buttons
                 .padding(.trailing, 8)
                 .frame(height: 28)
-            Divider()
+            Divider().overlay(Aya.border)
+            AssistBanner(assist: state.assist)
             ZStack(alignment: .bottomTrailing) {
                 transcript
                 if !atBottom {
                     Button { atBottom = true; jumpToEnd += 1 } label: {
-                        Image(systemName: "arrow.down.circle.fill").font(.title2)
+                        Image(systemName: "arrow.down.circle.fill").font(.title2).foregroundStyle(Aya.primary)
                     }
                     .buttonStyle(.plain).padding(8).help("Jump to the latest line")
                 }
@@ -319,7 +320,9 @@ struct FloatingTranscriptView: View {
         }
         // Opaque on purpose: a blurred, see-through window makes the window server
         // recompose it constantly whenever anything behind it moves.
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Aya.card)
+        .foregroundStyle(Aya.text)
+        .tint(Aya.primary)
         .ignoresSafeArea()
     }
 
@@ -341,7 +344,7 @@ struct FloatingTranscriptView: View {
                 .help("Start recording (\(state.recordingMode.title))")
             }
             Button { Task { await listen.toggle() } } label: {
-                Image(systemName: listen.isListening ? "pause.circle" : "ear")
+                Image(systemName: listen.isListening ? "pause.circle" : "ear").foregroundStyle(Aya.textMuted)
             }
             .help(listen.isListening ? "Pause the live transcript" : "Resume the live transcript")
             .disabled(state.isRecording)
@@ -357,13 +360,13 @@ struct FloatingTranscriptView: View {
                 Button("Larger Text") { fontSize = min(28, fontSize + 1) }
                 Button("Smaller Text") { fontSize = max(9, fontSize - 1) }
                 Divider()
-                Button("Open MeetingScribe") {
+                Button("Open MeetingAssistant") {
                     NSApp.activate(ignoringOtherApps: true)
                     let main = NSApp.windows.first { $0.identifier?.rawValue.hasPrefix("main") == true }
                         ?? NSApp.windows.first { !($0 is NSPanel) && $0.canBecomeMain }
                     main?.makeKeyAndOrderFront(nil)
                 }
-            } label: { Image(systemName: "ellipsis.circle") }
+            } label: { Image(systemName: "ellipsis.circle").foregroundStyle(Aya.textMuted) }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
         }
         .buttonStyle(.borderless)
@@ -382,7 +385,7 @@ struct FloatingTranscriptView: View {
                     } else if items.isEmpty {
                         Text(listen.isListening || state.isRecording ? "Listening… nothing is saved unless you press record."
                                                                      : "Paused.")
-                            .foregroundStyle(.secondary).font(.callout)
+                            .foregroundStyle(Aya.textMuted).font(.system(size: 12))
                     }
                     ForEach(items) { p in paragraph(p) }
                     Color.clear.frame(height: 1).id("end")
@@ -423,12 +426,12 @@ struct FloatingTranscriptView: View {
             HStack(spacing: 6) {
                 Text(p.speaker).fontWeight(.semibold)
                     .foregroundStyle(p.speaker == "…" ? Color.secondary : speakerColor(p.colorKey, isMe: p.isMe))
-                Text(Self.time.string(from: p.date)).foregroundStyle(.tertiary)
+                Text(Self.time.string(from: p.date)).foregroundStyle(Aya.textSubtle)
                 if p.recorded { Image(systemName: "record.circle").foregroundStyle(.red.opacity(0.7)) }
             }
             .font(.system(size: fontSize * 0.8))
             (Text(p.finalText) + Text(p.finalText.isEmpty || p.pendingText.isEmpty ? "" : " ")
-                + Text(p.pendingText).foregroundColor(.secondary))
+                + Text(p.pendingText).foregroundColor(Aya.textMuted))
                 .font(.system(size: fontSize))
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -462,7 +465,7 @@ private struct LevelDots: View {
     }
     private func icon(_ name: String, _ on: Bool) -> some View {
         Image(systemName: name).font(.system(size: 10))
-            .foregroundStyle(on ? Color.green : Color.secondary.opacity(0.5))
+            .foregroundStyle(on ? Aya.agent : Aya.textSubtle)
             .help(on ? "Sound is coming in" : "Silence")
     }
 }

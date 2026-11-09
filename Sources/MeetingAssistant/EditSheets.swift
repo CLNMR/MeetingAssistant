@@ -1,4 +1,4 @@
-import MeetingScribeCore
+import MeetingAssistantCore
 import SwiftUI
 
 /// A time in a recording: slider plus an editable "h:mm:ss" / "mm:ss" field.
@@ -90,6 +90,8 @@ struct TrimSheet: View {
     let info: SessionInfo
     let playhead: Double
     let lastSpeech: Double?
+    var initialStart: Double? = nil
+    var initialEnd: Double? = nil
     @State private var start: Double = 0
     @State private var end: Double = 0
 
@@ -116,7 +118,7 @@ struct TrimSheet: View {
         }
         .padding(20)
         .frame(width: 540)
-        .onAppear { end = info.durationSec }
+        .onAppear { start = initialStart ?? 0; end = initialEnd ?? info.durationSec }
     }
 
     private func row(_ label: String, value: Binding<Double>) -> some View {
@@ -135,11 +137,23 @@ struct SplitSheet: View {
     @Environment(\.dismiss) private var dismiss
     let info: SessionInfo
     let playhead: Double
+    var pause: Pause? = nil
     @State private var at: Double = 0
+    @State private var removePause = true
+
+    /// Splitting at the suggested point of the pause (not moved by hand).
+    private var atPause: Pause? {
+        guard let pause, abs(at - pause.splitPoint) < 0.5 else { return nil }
+        return pause
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Split Recording").font(.title3.weight(.semibold))
+            if let pause {
+                Text("No conversation from \(Exporter.clock(pause.start)) to \(Exporter.clock(pause.end)). Part 2 starts just before speech resumes.")
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Text("Everything after the split point becomes a separate recording, “\(info.title) (Part 2)”. The transcript is split too.")
                 .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             HStack {
@@ -147,12 +161,18 @@ struct SplitSheet: View {
                 Button("Playhead") { at = playhead }.controlSize(.small)
                     .help("Use the current playback position (\(Exporter.clock(playhead)))")
             }
-            Text("Part 1: \(Exporter.clock(at)) · Part 2: \(Exporter.clock(max(0, info.durationSec - at)))")
+            if let p = atPause, p.splitPoint - p.keepUntil >= 1 {
+                Toggle("Remove the pause (\(pauseLength(p.splitPoint - p.keepUntil))) from part 1", isOn: $removePause)
+            }
+            Text("Part 1: \(Exporter.clock(part1)) · Part 2: \(Exporter.clock(max(0, info.durationSec - at)))")
                 .font(.callout).foregroundStyle(.secondary)
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Split") { dismiss(); state.split(info.id, at: at) }
+                Button("Split") {
+                    dismiss()
+                    if let p = atPause { state.split(info.id, at: p, removePause: removePause) } else { state.split(info.id, at: at) }
+                }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
                     .disabled(at < 1 || info.durationSec - at < 1)
@@ -160,6 +180,11 @@ struct SplitSheet: View {
         }
         .padding(20)
         .frame(width: 540)
-        .onAppear { at = playhead > 1 ? playhead : info.durationSec / 2 }
+        .onAppear { at = pause?.splitPoint ?? (playhead > 1 ? playhead : info.durationSec / 2) }
+    }
+
+    private var part1: Double {
+        if let p = atPause, removePause, p.splitPoint - p.keepUntil >= 1 { return p.keepUntil }
+        return at
     }
 }

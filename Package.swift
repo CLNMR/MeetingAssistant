@@ -2,10 +2,10 @@
 import PackageDescription
 
 let package = Package(
-    name: "MeetingScribe",
+    name: "MeetingAssistant",
     platforms: [.macOS("15.0")],
     products: [
-        .executable(name: "MeetingScribe", targets: ["MeetingScribe"]),
+        .executable(name: "MeetingAssistant", targets: ["MeetingAssistant"]),
         .executable(name: "msctl", targets: ["msctl"]),
     ],
     dependencies: [
@@ -14,7 +14,7 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "MeetingScribeCore",
+            name: "MeetingAssistantCore",
             dependencies: [
                 .product(name: "FluidAudio", package: "FluidAudio"),
                 .product(name: "Qwen3ASR", package: "speech-swift"),
@@ -23,18 +23,18 @@ let package = Package(
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .executableTarget(
-            name: "MeetingScribe",
-            dependencies: ["MeetingScribeCore"],
+            name: "MeetingAssistant",
+            dependencies: ["MeetingAssistantCore"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .executableTarget(
             name: "msctl",
-            dependencies: ["MeetingScribeCore"],
+            dependencies: ["MeetingAssistantCore"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .testTarget(
-            name: "MeetingScribeCoreTests",
-            dependencies: ["MeetingScribeCore"],
+            name: "MeetingAssistantCoreTests",
+            dependencies: ["MeetingAssistantCore"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
     ]

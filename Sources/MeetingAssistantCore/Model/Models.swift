@@ -121,14 +121,32 @@ public struct Transcript: Codable, Sendable {
     }
 }
 
-/// On-disk layout: ~/Library/Application Support/MeetingScribe/
+/// On-disk layout: ~/Library/Application Support/MeetingAssistant/
+/// (called MeetingScribe before the rename; the old folder is moved on first use).
 public enum AppPaths {
-    public static var root: URL {
-        if let override = ProcessInfo.processInfo.environment["MEETINGSCRIBE_HOME"] {
+    public static let root: URL = {
+        let env = ProcessInfo.processInfo.environment
+        if let override = env["MEETINGASSISTANT_HOME"] ?? env["MEETINGSCRIBE_HOME"] {
             return URL(fileURLWithPath: override, isDirectory: true)
         }
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return base.appendingPathComponent("MeetingScribe", isDirectory: true)
+        return migratedRoot(base: base)
+    }()
+
+    /// Moves `MeetingScribe/` to `MeetingAssistant/` once. If the move is impossible, keeps using the old folder,
+    /// so existing recordings are never lost or hidden.
+    static func migratedRoot(base: URL) -> URL {
+        let fm = FileManager.default
+        let new = base.appendingPathComponent("MeetingAssistant", isDirectory: true)
+        let old = base.appendingPathComponent("MeetingScribe", isDirectory: true)
+        guard fm.fileExists(atPath: old.path) else { return new }
+        if !fm.fileExists(atPath: new.path) {
+            if (try? fm.moveItem(at: old, to: new)) != nil { return new }
+            return old
+        }
+        // Both exist (e.g. an old build ran after the move): keep using the new one unless it is empty.
+        let newItems = (try? fm.contentsOfDirectory(atPath: new.path)) ?? []
+        return newItems.isEmpty ? old : new
     }
     public static var sessions: URL { root.appendingPathComponent("Sessions", isDirectory: true) }
     public static var models: URL { root.appendingPathComponent("Models", isDirectory: true) }

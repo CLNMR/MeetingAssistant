@@ -1,6 +1,13 @@
-# MeetingScribe
+# MeetingAssistant
 
-A native macOS app that records meetings and turns them into speaker-labelled transcripts. Everything runs locally on Apple Silicon: no cloud, no account, audio never leaves the Mac.
+A native macOS app for meetings, with two modes (switch with the toolbar, ⌘1 / ⌘2):
+
+- **Scribe** records meetings and turns them into speaker-labelled transcripts. Everything runs locally on Apple Silicon: no cloud, no account, audio never leaves the Mac.
+- **Assist** reads the live transcript together with client context from Aya and suggests the next question, keeps a running summary, and tracks attendees, open points and the playbook. It uses the local Claude Code login (your Claude subscription) and sends the transcript text, not audio, to Claude.
+
+The app was called MeetingScribe until November 2026. It keeps the same bundle identifier, so permissions and settings carry over, and it moves `~/Library/Application Support/MeetingScribe` to `…/MeetingAssistant` on first launch.
+
+**Scribe:**
 
 - **Online calls (Teams, Zoom, Meet, browser):** records your microphone and the call audio as two separate tracks. Your mic is "Me", remote participants are separated automatically.
 - **In-person meetings:** records the microphone only and separates the speakers in the room. A one-time voice sample lets the app recognise you.
@@ -17,12 +24,12 @@ Requirements: Apple Silicon Mac, macOS 15 or newer, Xcode 16+ command-line tools
 ./scripts/build_app.sh --install     # builds, signs and copies to /Applications
 ```
 
-The script installs the Metal toolchain on first run if it is missing. Without `--install` the app is left in `build/MeetingScribe.app`.
+The script installs the Metal toolchain on first run if it is missing. Without `--install` the app is left in `build/MeetingAssistant.app`.
 
 On first launch click **Download Models** (about 1.5 GB, one time). On the first recording macOS asks for two permissions:
 
 1. **Microphone**.
-2. **System Audio Recording** (needed for Call and Hybrid mode). If you dismissed it, enable MeetingScribe under System Settings › Privacy & Security › Screen & System Audio Recording › System Audio Recording Only.
+2. **System Audio Recording** (needed for Call and Hybrid mode). If you dismissed it, enable MeetingAssistant under System Settings › Privacy & Security › Screen & System Audio Recording › System Audio Recording Only.
 
 For in-person meetings, open **Settings › Voices** and record a 20-second voice sample.
 
@@ -35,13 +42,13 @@ For in-person meetings, open **Settings › Voices** and record a 20-second voic
 
 Existing recordings can be transcribed with **Import Audio** (⌘I): one file for an in-person meeting, or two files (mic, then call audio) for a call.
 
-Recordings live in `~/Library/Application Support/MeetingScribe/Sessions/<id>/` as `mic.caf`, `system.caf`, `session.json` and `transcript.json`.
+Recordings live in `~/Library/Application Support/MeetingAssistant/Sessions/<id>/` as `mic.caf`, `system.caf`, `session.json` and `transcript.json`.
 
 ## Floating live transcript
 
 File › Floating Live Transcript (⇧⌘L, also in the menu bar) opens a small always-on-top
 window that can be moved and resized freely and stays visible on every Space and over
-full-screen apps. While it is open, MeetingScribe listens to the microphone and the
+full-screen apps. While it is open, MeetingAssistant listens to the microphone and the
 call audio and shows a live transcript **without saving anything**. The ⏺ button starts
 a real recording (the window keeps showing its live transcript, marked with a red dot),
 ⏸ pauses listening, and ⋯ has Copy, Clear and text size. Closing the window stops
@@ -49,6 +56,25 @@ listening; it reopens at the next launch if it was open. If your microphone is a
 headset, the window listens through the Mac's built-in microphone instead: opening a
 headset's mic switches it into call mode, which makes music sound bad. The transcriber is replaced
 every ~10 minutes so memory stays flat when it runs all day.
+
+## Assist
+
+Assist turns a recording into a live sales/meeting copilot and writes the results back into [Aya](https://hey-aya.ai).
+
+**Setup (once):**
+1. Install [Claude Code](https://claude.com/code) and run `claude` once in Terminal to log in with your Claude account. Assist uses that login (your subscription), not an API key.
+2. In Aya, switch on *API documentation* in the organization settings (the app reads each list's fields from it).
+3. Settings › Assist: enter the Aya organization id (the part after `app.hey-aya.ai/org/` in the URL) and an org API key (`aya_key_…`, stored in the Keychain), then *Connect*. The app picks the lists *Companies*, *Contacts*, *Playbooks* and *Meetings*; each can be changed there, together with the link fields (contact → company, recap → company, recap → contacts).
+
+**A meeting:**
+1. Assist mode (⌘2): pick the client and the playbook, optionally a goal, and *Start Assist*. This starts a normal recording with live transcription.
+2. Claude reads the client record, its contacts, the playbook and the last recaps, and keeps five panels up to date: the **next question** (with alternatives; *Asked*, *Other*, *Suggest now* ⇧⌘Space), a running **summary**, **open points**, the **attendees** (matched to speakers and Aya contacts) and the **playbook** checklist. Questions and summary follow the language of the meeting. Ticking items by hand is passed on to Claude. The floating live transcript window shows the next question too.
+3. *Stop*: the final transcript is made as usual, then Claude drafts the **recap** from the recap list's fields. Edit it and *Upload to Aya* (uploading again updates the same record).
+4. *Propose Updates*: Claude compares the client and contact records with what was said and proposes changes, each with a reason, plus new contacts for attendees not yet in Aya. Nothing is written until you tick it and *Apply*.
+
+A recording made with Assist has an *Assist Recap* button in Scribe, to do steps 3–4 later.
+
+**How it talks to Claude:** one `claude -p --input-format stream-json` process per meeting, with no tools, no MCP servers and none of your Claude Code settings. Every 20–60 s (Settings › Assist › Update frequency) it receives the newly finished transcript lines and answers with JSON lines that each change one panel; they are applied as they stream in, so the next question appears about 3 s after an update starts. After an hour the conversation is restarted with a summary of the panels. Each update counts against your Claude plan's usage limits; when the limit is reached, Assist pauses and retries while the recording continues. Only transcript text and the Aya context are sent to Claude, never audio. Details and measurements: [MEETINGASSIST_PLAN.md](MEETINGASSIST_PLAN.md).
 
 ## Trimming and splitting
 
@@ -89,11 +115,11 @@ Live mode cuts each track into utterances with Silero VAD, transcribes each with
 Source layout:
 
 ```
-Sources/MeetingScribeCore/Capture    system-audio tap, mic, resampling, aligned track writer
-Sources/MeetingScribeCore/Pipeline   models, VAD chunking, diarization, speaker ID, merger, live mode, export
-Sources/MeetingScribe                SwiftUI app (recorder, transcript view, settings, menu-bar extra)
-Sources/msctl                        command-line tool for testing (record, import, transcribe, livetest, asr)
-Tests/                               unit tests for the pure logic (swift test)
+Sources/MeetingAssistantCore/Capture   system-audio tap, mic, resampling, aligned track writer
+Sources/MeetingAssistantCore/Pipeline  models, VAD chunking, diarization, speaker ID, merger, live mode, export
+Sources/MeetingAssistant              SwiftUI app (recorder, transcript view, settings, menu-bar extra)
+Sources/msctl                         command-line tool for testing (record, import, transcribe, livetest, asr)
+Tests/                                unit tests for the pure logic (swift test)
 eval/                                scripts used for the model comparison below
 ```
 
@@ -130,7 +156,19 @@ Caveat: the meeting test uses synthetic voices. Real meetings with crosstalk and
 .build/release/msctl split <id> <seconds>               # split into two recordings
 ```
 
-Set `MEETINGSCRIBE_HOME=/some/dir` to keep test data out of the app's storage.
+Assist and Aya (`AYA_API_KEY` overrides the Keychain):
+
+```
+.build/release/msctl aya setup <orgId>                  # connect, pick default lists, read fields
+.build/release/msctl aya list clients|playbooks         # reload a picker list
+.build/release/msctl aya context <clientId> [playbookId]   # what Claude is told before a meeting
+.build/release/msctl assist check                       # Claude Code installed and logged in?
+.build/release/msctl assist replay <id> --client <clientId> [--playbook <id>] [--speed 4] [--minutes 5] [--save file]
+.build/release/msctl assist live <id> --client <clientId> [--minutes 3]   # real audio → live transcriber → Claude
+.build/release/msctl assist recap|crm <id> [--record file] # draft the recap / CRM proposal (prints only)
+```
+
+Set `MEETINGASSISTANT_HOME=/some/dir` to keep test data out of the app's storage.
 
 ## Known limitations
 

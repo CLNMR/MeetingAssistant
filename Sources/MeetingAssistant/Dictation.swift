@@ -2,7 +2,7 @@ import AppKit
 import ApplicationServices
 import Carbon.HIToolbox
 import CoreAudio
-import MeetingScribeCore
+import MeetingAssistantCore
 import SwiftUI
 
 /// Push-to-talk dictation: hold the global shortcut, speak, release. The text is copied

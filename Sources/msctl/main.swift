@@ -1,6 +1,6 @@
 import AVFoundation
 import Foundation
-import MeetingScribeCore
+import MeetingAssistantCore
 
 // Command-line companion used for testing the capture and the pipeline without the GUI.
 //   msctl record <seconds> [call|inPerson|hybrid] [--mute]
@@ -18,11 +18,17 @@ func usage() -> Never {
       msctl enroll <voice.wav> [name]
       msctl export <session-id> md|txt|srt|json
       msctl trim <session-id> <start> <end> | split <session-id> <seconds>
+      msctl aya …      (Aya connection, see `msctl aya`)
+      msctl assist …   (Assist engine and recaps, see `msctl assist`)
     """)
     exit(2)
 }
 
 switch args.first {
+case "aya":
+    runAya(Array(args.dropFirst()))
+case "assist":
+    runAssist(Array(args.dropFirst()))
 case "perm":
     print("microphone: \(Permissions.microphone.rawValue)")
 case "taptest":

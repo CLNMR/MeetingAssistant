@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Builds MeetingScribe.app into ./build and (with --install) copies it to /Applications.
+# Builds MeetingAssistant.app into ./build and (with --install) copies it to /Applications.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
-APP="build/MeetingScribe.app"
+APP="build/MeetingAssistant.app"
 
 echo "==> Compiling (release)"
-swift build -c release --product MeetingScribe
+swift build -c release --product MeetingAssistant
 swift build -c release --product msctl
 BIN="$(swift build -c release --show-bin-path)"
 
@@ -33,7 +33,7 @@ cp "$METALLIB" "$BIN/../release/mlx.metallib" 2>/dev/null || true   # lets msctl
 echo "==> Assembling $APP"
 command rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$BIN/MeetingScribe" "$APP/Contents/MacOS/"
+cp "$BIN/MeetingAssistant" "$APP/Contents/MacOS/"
 cp Resources/Info.plist "$APP/Contents/"
 for b in "$BIN"/*.bundle; do cp -R "$b" "$APP/Contents/Resources/"; done
 CMLX="$APP/Contents/Resources/mlx-swift_Cmlx.bundle/Contents/Resources"
@@ -53,13 +53,17 @@ cp build/AppIcon.icns "$APP/Contents/Resources/"
 echo "==> Signing"
 IDENTITY="${SIGN_IDENTITY:-$(security find-identity -p codesigning -v 2>/dev/null | awk -F'"' '/Apple Development|Developer ID/ {print $2; exit}')}"
 IDENTITY="${IDENTITY:--}"
-codesign --force --deep --options runtime --entitlements Resources/MeetingScribe.entitlements -s "$IDENTITY" "$APP"
+codesign --force --deep --options runtime --entitlements Resources/MeetingAssistant.entitlements -s "$IDENTITY" "$APP"
 codesign --verify --deep --strict "$APP" && echo "signed with: $IDENTITY"
 
 if [[ "${1:-}" == "--install" ]]; then
   echo "==> Installing to /Applications"
-  command rm -rf /Applications/MeetingScribe.app
+  command rm -rf /Applications/MeetingAssistant.app
   cp -R "$APP" /Applications/
-  echo "Installed /Applications/MeetingScribe.app"
+  echo "Installed /Applications/MeetingAssistant.app"
+  # The app was called MeetingScribe before (same bundle id, so permissions and settings carry over).
+  if [[ -d /Applications/MeetingScribe.app ]]; then
+    command rm -rf /Applications/MeetingScribe.app && echo "Removed the old /Applications/MeetingScribe.app"
+  fi
 fi
 echo "Done: $ROOT/$APP"
