@@ -6,7 +6,24 @@ struct AssistHomeView: View {
     @EnvironmentObject var state: AppState
 
     var body: some View {
-        AssistRouter(assist: state.assist)
+        AssistLayout(assist: state.assist)
+    }
+}
+
+/// Past meetings on the left, except during a meeting and before Aya is connected.
+private struct AssistLayout: View {
+    @ObservedObject var assist: AssistController
+    var body: some View {
+        if assist.phase == .running || !assist.isConnected {
+            AssistRouter(assist: assist)
+        } else {
+            HStack(spacing: 8) {
+                AssistMeetingsPanel(assist: assist).frame(width: 270)
+                AssistRouter(assist: assist)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipShape(RoundedRectangle(cornerRadius: Aya.radiusSurface, style: .continuous))
+            }
+        }
     }
 }
 
@@ -534,20 +551,118 @@ struct FlowLayout: Layout {
 private struct AssistLiveView: View {
     @EnvironmentObject var state: AppState
     @ObservedObject var assist: AssistController
+    /// Width shares of Summary and Open points (Playbook gets the rest).
+    @AppStorage("assistLive.summaryShare") private var summaryShare = 0.4
+    @AppStorage("assistLive.openShare") private var openShare = 0.3
+    /// Height of the transcript at the bottom; the panels take what is left above it.
+    @AppStorage("assistLive.transcriptHeight") private var transcriptHeight = 240.0
+    @State private var dragStart: Double?
+    @State private var questionHeight: CGFloat = 0
+    @State private var tablesHeight: CGFloat = 0
+    @State private var speakerPopover: String?
+    @State private var attendeePopover: String?
 
     var body: some View {
-        VStack(spacing: 8) {
-            statusBar
-            questionCard
-            HStack(spacing: 8) {
-                summaryBox.frame(minWidth: 220)
-                openPointsBox.frame(minWidth: 200)
-                if !assist.state.playbook.isEmpty { playbookBox.frame(minWidth: 200) }
+        GeometryReader { g in
+            let maxTranscript = max(90, g.size.height - 360)
+            VStack(spacing: 8) {
+                statusBar
+                if assist.catchUp != nil || assist.catchUpState != .idle { catchUpCard }
+                upperArea
+                // Attendees sit directly on the transcript; the handle in the gap above resizes both.
+                VStack(spacing: 8) {
+                    attendeesRow
+                    transcriptPanel.frame(height: min(transcriptHeight, maxTranscript))
+                }
+                .overlay(alignment: .top) {
+                    ResizeHandle(axis: .vertical) { delta, ended in
+                        let start = dragStart ?? min(transcriptHeight, maxTranscript)
+                        dragStart = ended ? nil : start
+                        transcriptHeight = min(max(90, start - delta), maxTranscript)
+                    }
+                    .offset(y: -ResizeHandle.thickness)
+                    .help("Drag to make the transcript taller or shorter")
+                }
             }
-            .frame(minHeight: 200)
-            if !(assist.state.tables ?? []).isEmpty { LiveTablesCard(assist: assist) }
-            attendeesRow
-            transcriptStrip
+        }
+    }
+
+    /// Question, panels and tables. The panels fill the height that is left; when the window is too
+    /// small for that, this part scrolls instead of pushing the transcript away.
+    private var upperArea: some View {
+        GeometryReader { up in
+            let hasTables = !(assist.state.tables ?? []).isEmpty
+            let rest = up.size.height - questionHeight - 8 - (hasTables ? tablesHeight + 8 : 0)
+            ScrollView {
+                VStack(spacing: 8) {
+                    questionCard
+                        .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { questionHeight = $0 }
+                    panelsRow.frame(height: max(160, rest))
+                    if hasTables {
+                        LiveTablesCard(assist: assist)
+                            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { tablesHeight = $0 }
+                    }
+                }
+            }
+            .scrollIndicators(rest < 160 ? .automatic : .never)
+        }
+    }
+
+    /// The three panels side by side, with handles between them.
+    private var panelsRow: some View {
+        GeometryReader { g in
+            let hasPlaybook = !assist.state.playbook.isEmpty
+            let handles = hasPlaybook ? 2.0 : 1.0
+            let avail = max(300, g.size.width - handles * ResizeHandle.thickness)
+            let (sh, oh) = shares(hasPlaybook)
+            let summaryW = avail * sh
+            let openW = hasPlaybook ? avail * oh : avail - summaryW
+            HStack(spacing: 0) {
+                summaryBox.frame(width: summaryW)
+                ResizeHandle(axis: .horizontal) { delta, ended in
+                    resize(.afterSummary, by: delta / avail, ended: ended, hasPlaybook: hasPlaybook)
+                }
+                openPointsBox.frame(width: openW)
+                if hasPlaybook {
+                    ResizeHandle(axis: .horizontal) { delta, ended in
+                        resize(.afterOpenPoints, by: delta / avail, ended: ended, hasPlaybook: true)
+                    }
+                    playbookBox.frame(maxWidth: .infinity)
+                }
+            }
+        }
+    }
+
+    enum Border { case afterSummary, afterOpenPoints }
+
+    /// Width shares in use. Without the playbook, Summary and Open points fill the row; with it,
+    /// the playbook keeps at least 15 %.
+    private func shares(_ hasPlaybook: Bool) -> (Double, Double) {
+        let s = max(0.05, summaryShare), o = max(0.05, openShare)
+        if !hasPlaybook { return (s / (s + o), o / (s + o)) }
+        let scale = s + o > 0.85 ? 0.85 / (s + o) : 1
+        return (s * scale, o * scale)
+    }
+
+    /// Moves the border right of Summary or right of Open points. Every panel keeps at least
+    /// 15 % of the width.
+    private func resize(_ border: Border, by delta: Double, ended: Bool, hasPlaybook: Bool) {
+        let minShare = 0.15
+        let (sh, oh) = shares(hasPlaybook)
+        switch border {
+        case .afterSummary:
+            let start = dragStart ?? sh
+            dragStart = ended ? nil : start
+            // Summary and Open points trade width; the playbook (if any) stays as it is.
+            let pair = sh + oh
+            let new = min(max(start + delta, minShare), pair - minShare)
+            summaryShare = new
+            openShare = pair - new
+        case .afterOpenPoints:
+            let start = dragStart ?? oh
+            dragStart = ended ? nil : start
+            summaryShare = sh
+            openShare = min(max(start + delta, minShare), 1 - sh - minShare)
         }
     }
 
@@ -568,6 +683,16 @@ private struct AssistLiveView: View {
             statusText
             AyaTag(text: "\(assist.state.updates) updates", color: Aya.agentTextMid)
                 .help(String(format: "Each update uses some of your Claude subscription (API equivalent so far: $%.2f).", assist.state.costUSD))
+            Menu {
+                ForEach([2, 5, 10], id: \.self) { m in
+                    Button("Last \(m) minutes") { Task { await assist.whatDidIMiss(minutes: m) } }
+                }
+            } label: {
+                Label("What did I miss?", systemImage: "clock.arrow.circlepath")
+            }
+            .menuStyle(.borderlessButton).fixedSize()
+            .disabled(assist.catchUpState.isWorking)
+            .help("A short summary of the last minutes, for when you were distracted")
             Button { assist.togglePause() } label: { Label(assist.paused ? "Resume" : "Pause", systemImage: assist.paused ? "play.fill" : "pause.fill") }
                 .buttonStyle(AyaButtonStyle(kind: .secondary, pill: true))
                 .help("Pause the assistant; recording and transcript continue.")
@@ -576,6 +701,25 @@ private struct AssistLiveView: View {
         }
         .padding(.horizontal, 14).padding(.vertical, 10)
         .ayaAgentSurface(active: !assist.paused)
+    }
+
+    private var catchUpCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                AyaEyebrow(text: assist.catchUp.map { "The last \($0.minutes) minutes" } ?? "What did I miss?",
+                           icon: "clock.arrow.circlepath", color: Aya.agentTextMid)
+                Spacer()
+                Button { assist.catchUp = nil; assist.catchUpState = .idle } label: { Image(systemName: "xmark") }
+                    .buttonStyle(AyaButtonStyle(kind: .ghost, size: .small)).help("Close")
+            }
+            StepLine(step: assist.catchUpState)
+            if let c = assist.catchUp {
+                Text(c.text).font(.system(size: 14)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .ayaSurface()
     }
 
     @ViewBuilder private var statusText: some View {
@@ -629,23 +773,38 @@ private struct AssistLiveView: View {
         .ayaAgentSurface()
     }
 
+    /// One paragraph per topic; the topic label before the colon in bold.
     private var summaryBox: some View {
         PanelBox(title: "Summary", icon: "text.alignleft", trailing: panelCount("\(assist.state.summary.count)")) {
             ScrollViewReader { proxy in
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach(Array(assist.state.summary.enumerated()), id: \.offset) { i, b in
-                            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                Circle().fill(Aya.agent).frame(width: 5, height: 5).offset(y: -2)
-                                Text(b).font(.system(size: 13)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                            .modifier(Highlight(on: assist.state.changed.contains("s\(i)"))).id(i)
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(Array(assist.state.summary.enumerated()), id: \.offset) { i, p in
+                            Self.paragraph(p)
+                                .font(.system(size: 13))
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .modifier(Highlight(on: assist.state.changed.contains("s\(i)"))).id(i)
                         }
                     }
                 }
-                .onChange(of: assist.state.summary.count) { _, n in withAnimation { proxy.scrollTo(n - 1, anchor: .bottom) } }
+                // Follow the paragraph that just changed (new or rewritten).
+                .onChange(of: assist.state.changed) { _, changed in
+                    let idx = changed.compactMap { $0.hasPrefix("s") ? Int($0.dropFirst()) : nil }.max()
+                    if let idx { withAnimation { proxy.scrollTo(idx, anchor: .center) } }
+                }
             }
         }
+    }
+
+    /// "Lager: Bestände unbekannt …" → topic in bold. Text without a short label stays as it is.
+    static func paragraph(_ p: String) -> Text {
+        if let r = p.range(of: ": "), p.distance(from: p.startIndex, to: r.lowerBound) <= 40 {
+            let topic = String(p[..<r.lowerBound]).trimmingCharacters(in: CharacterSet(charactersIn: "*# "))
+            return Text(topic + ": ").fontWeight(.semibold) + Text(String(p[r.upperBound...]))
+        }
+        return Text(p)
     }
 
     private var openPointsBox: some View {
@@ -677,7 +836,7 @@ private struct AssistLiveView: View {
     private var playbookBox: some View {
         let items = assist.state.playbook
         let covered = items.filter { $0.status == .covered }.count
-        return PanelBox(title: "Playbook", icon: "checklist", trailing: panelCount("\(covered)/\(items.count)")) {
+        return PanelBox(title: "Checklist", icon: "checklist", trailing: panelCount("\(covered)/\(items.count)")) {
             VStack(alignment: .leading, spacing: 8) {
                 GeometryReader { g in
                     ZStack(alignment: .leading) {
@@ -737,6 +896,17 @@ private struct AssistLiveView: View {
     }
 
     private func chip(_ a: AssistState.Attendee, dim: Bool) -> some View {
+        let raw = assist.rawSpeaker(for: a)
+        return Button { attendeePopover = a.id } label: { chipLabel(a, dim: dim) }
+            .buttonStyle(.plain)
+            .pointerStyle(.link)
+            .popover(isPresented: Binding(get: { attendeePopover == a.id }, set: { if !$0 { attendeePopover = nil } }), arrowEdge: .bottom) {
+                PersonPopover(assist: assist, name: a.name, contactID: a.contactID, label: a.speaker,
+                              onRename: raw.map { r in { assist.renameSpeaker(raw: r, to: $0) } })
+            }
+    }
+
+    private func chipLabel(_ a: AssistState.Attendee, dim: Bool) -> some View {
         HStack(spacing: 5) {
             Text(ayaInitial(a.name))
                 .font(.system(size: 10, weight: .semibold))
@@ -753,22 +923,96 @@ private struct AssistLiveView: View {
         .background(Aya.card, in: Capsule())
         .overlay(Capsule().strokeBorder(Aya.border, lineWidth: 1))
         .opacity(dim ? 0.6 : 1)
-        .help(a.notes ?? "")
+        .help(a.notes ?? "Click for details from Aya")
         .modifier(Highlight(on: assist.state.changed.contains("a:\(a.id)")))
     }
 
-    private var transcriptStrip: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            ForEach(state.liveLines.suffix(3)) { l in
-                let who = l.track == .mic && state.recordingMode == .call ? (state.prefs.myName.isEmpty ? "Me" : state.prefs.myName) : "Them"
-                (Text(who + "  ").fontWeight(.semibold).foregroundColor(l.track == .mic ? Aya.primary : Aya.agentTextMid)
-                 + Text(l.text).foregroundColor(l.isFinal ? Aya.textMuted : Aya.textSubtle))
-                    .font(.system(size: 12)).lineLimit(1)
+    /// The live transcript: all lines, scrolled to the newest, taking the rest of the height.
+    private var transcriptPanel: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            AyaEyebrow(text: "Transcript", icon: "text.quote")
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 4) {
+                        ForEach(state.liveLines.suffix(300)) { l in
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                speakerButton(l)
+                                Text(l.text).foregroundColor(l.isFinal ? Aya.text : Aya.textSubtle)
+                                    .textSelection(.enabled)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .font(.system(size: 12.5))
+                            .id(l.id)
+                        }
+                    }
+                    .padding(.trailing, 6)
+                }
+                .onChange(of: state.liveLines.last?.id) { _, id in
+                    if let id { withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id, anchor: .bottom) } }
+                }
+                .onAppear {
+                    // After the first layout, otherwise the scroll position is lost.
+                    DispatchQueue.main.async { if let id = state.liveLines.last?.id { proxy.scrollTo(id, anchor: .bottom) } }
+                }
             }
         }
-        .padding(.horizontal, 14).padding(.vertical, 8)
-        .frame(maxWidth: .infinity, minHeight: 56, alignment: .topLeading)
+        .padding(.horizontal, 14).padding(.vertical, 10)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .ayaSurface(fill: Aya.card.opacity(0.7), shadow: false)
+    }
+
+    /// The speaker's name; a click shows what Aya knows about them and lets you name them.
+    @ViewBuilder private func speakerButton(_ l: LiveLine) -> some View {
+        let name = assist.liveName(l)
+        let color = l.track == .mic ? Aya.primary : Aya.agentTextMid
+        if let raw = l.speaker, let name {
+            Button { speakerPopover = l.id } label: {
+                Text(name).fontWeight(.semibold).foregroundColor(color)
+                    .underline(SpeakerNames.isGeneric(name), pattern: .dot, color: color.opacity(0.5))
+            }
+            .buttonStyle(.plain)
+            .pointerStyle(.link)
+            .help(SpeakerNames.isGeneric(name) ? "Who is this? Click to name the speaker." : "Click for details from Aya, or to rename")
+            .popover(isPresented: Binding(get: { speakerPopover == l.id }, set: { if !$0 { speakerPopover = nil } }), arrowEdge: .trailing) {
+                PersonPopover(assist: assist, name: name,
+                              contactID: assist.state.attendees.first { $0.name == name }?.contactID,
+                              label: assist.state.speakerNames?[raw]) { assist.renameSpeaker(raw: raw, to: $0) }
+            }
+        } else {
+            Text("…").fontWeight(.semibold).foregroundColor(Aya.textSubtle).help("Speaker not recognised yet")
+        }
+    }
+}
+
+/// A thin bar between two panels that resizes them when dragged. Reports the drag distance
+/// since the start, and once more when the drag ends.
+private struct ResizeHandle: View {
+    enum Axis { case horizontal, vertical }   // horizontal: a vertical bar that moves left/right
+    static let thickness: CGFloat = 8
+    let axis: Axis
+    let onDrag: (_ delta: Double, _ ended: Bool) -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        ZStack {
+            Color.clear
+            Capsule()
+                .fill(hovering ? Aya.primary.opacity(0.6) : Aya.border)
+                .frame(width: axis == .horizontal ? 3 : 36, height: axis == .horizontal ? 36 : 3)
+        }
+        .frame(width: axis == .horizontal ? Self.thickness : nil, height: axis == .vertical ? Self.thickness : nil)
+        .frame(maxWidth: axis == .vertical ? .infinity : nil, maxHeight: axis == .horizontal ? .infinity : nil)
+        .contentShape(Rectangle())
+        .onHover { h in
+            hovering = h
+            if h { (axis == .horizontal ? NSCursor.resizeLeftRight : NSCursor.resizeUpDown).push() } else { NSCursor.pop() }
+        }
+        .gesture(
+            DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                .onChanged { v in onDrag(axis == .horizontal ? v.translation.width : v.translation.height, false) }
+                .onEnded { v in onDrag(axis == .horizontal ? v.translation.width : v.translation.height, true) }
+        )
     }
 }
 
@@ -778,6 +1022,10 @@ private struct AssistReviewView: View {
     @EnvironmentObject var state: AppState
     @ObservedObject var assist: AssistController
     let sessionID: String
+    @State private var confirmDelete: SessionInfo?
+    @State private var attendeePopover: String?
+    @State private var confirmRedraft = false
+    @State private var confirmRepropose = false
 
     var body: some View {
         VStack(spacing: 14) {
@@ -785,17 +1033,22 @@ private struct AssistReviewView: View {
                        subtitle: [assist.record?.context.playbookTitle, assist.record.map { $0.context.date.formatted(date: .abbreviated, time: .shortened) }]
                         .compactMap { $0 }.joined(separator: " · ")) {
                 HStack(spacing: 8) {
+                    Button { confirmDelete = state.sessions.first { $0.id == sessionID } } label: { Label("Delete", systemImage: "trash") }
+                        .buttonStyle(AyaButtonStyle(kind: .ghost))
+                        .disabled(state.sessions.first { $0.id == sessionID }.map(AssistMeetingsPanel.isBusy) ?? true)
+                        .help("Delete the recording, transcript and notes on this Mac")
                     Button { state.appMode = .scribe; state.selection = .session(sessionID) } label: { Label("Show Transcript", systemImage: "text.bubble") }
                         .buttonStyle(AyaButtonStyle(kind: .secondary))
                     Button("Done") { assist.finishReview() }
                         .buttonStyle(AyaButtonStyle(kind: .primary))
-                        .keyboardShortcut(.defaultAction)
                 }
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
+                    ReviewSpeakersSection(assist: assist, sessionID: sessionID)
                     recapSection
                     if !assist.reviewTables.isEmpty { ReviewTablesSection(assist: assist) }
+                    if hasMeetingState { meetingStateSection }
                     if assist.record?.context.clientID != nil { crmSection }
                 }
                 .frame(maxWidth: 920, alignment: .leading)
@@ -805,6 +1058,89 @@ private struct AssistReviewView: View {
         }
         .padding(20)
         .background(AyaBackdrop())
+        .deleteMeetingDialog(assist: assist, item: $confirmDelete)
+        .confirmationDialog("Draft the recap again?", isPresented: $confirmRedraft) {
+            Button("Draft Again", role: .destructive) { Task { await assist.draftRecap() } }
+        } message: { Text("Claude writes a new recap. Your edits to the current one are replaced.") }
+        .confirmationDialog("Propose the updates again?", isPresented: $confirmRepropose) {
+            Button("Propose Again", role: .destructive) { Task { await assist.proposeCRM() } }
+        } message: { Text("Claude makes a new proposal. Your ticks and edits in the current one are replaced.") }
+    }
+
+    // The meeting as it ended: summary, open points and who was there.
+
+    private var hasMeetingState: Bool {
+        let s = assist.state
+        return !s.summary.isEmpty || !s.openPoints.isEmpty || !s.attendees.isEmpty || !s.playbook.isEmpty
+    }
+
+    private var meetingStateSection: some View {
+        let s = assist.state
+        return VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("During the meeting").font(.system(size: 16, weight: .semibold))
+                Text("The live notes as they were when the meeting ended.").font(.system(size: 12)).foregroundStyle(Aya.textMuted)
+            }
+            if !s.attendees.isEmpty {
+                FlowLayout(spacing: 6) {
+                    ForEach(s.attendees) { a in
+                        Button { attendeePopover = a.id } label: {
+                            HStack(spacing: 5) {
+                                Text(ayaInitial(a.name)).font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(a.contactID != nil ? Aya.agentForeground : Aya.primary)
+                                    .frame(width: 20, height: 20)
+                                    .background(a.contactID != nil ? Aya.agent : Aya.primary.opacity(0.12), in: Circle())
+                                Text(a.name).fontWeight(.medium)
+                                if let r = a.role { Text(r).foregroundStyle(Aya.textMuted) }
+                            }
+                            .font(.system(size: 12))
+                            .padding(.leading, 3).padding(.trailing, 10).padding(.vertical, 3)
+                            .background(Aya.card, in: Capsule())
+                            .overlay(Capsule().strokeBorder(Aya.border, lineWidth: 1))
+                            .opacity(a.present == false ? 0.6 : 1)
+                        }
+                        .buttonStyle(.plain)
+                        .pointerStyle(.link)
+                        .popover(isPresented: Binding(get: { attendeePopover == a.id }, set: { if !$0 { attendeePopover = nil } }), arrowEdge: .bottom) {
+                            PersonPopover(assist: assist, name: a.name, contactID: a.contactID)
+                        }
+                    }
+                }
+            }
+            if !s.summary.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    AyaEyebrow(text: "Summary", icon: "text.alignleft")
+                    ForEach(Array(s.summary.enumerated()), id: \.offset) { _, p in
+                        AssistLiveView.paragraph(p).font(.system(size: 13)).textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            if !s.openPoints.isEmpty {
+                VStack(alignment: .leading, spacing: 5) {
+                    AyaEyebrow(text: "Open points", icon: "circle.dashed")
+                    ForEach(s.openPoints) { p in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Image(systemName: p.status == .answered ? "checkmark.circle.fill" : p.status == .parked ? "pause.circle" : "circle")
+                                .foregroundStyle(p.status == .answered ? Aya.success : Aya.textSubtle)
+                            Text(p.text).foregroundStyle(p.status == .open ? Aya.text : Aya.textMuted)
+                                .strikethrough(p.status == .answered, color: Aya.textSubtle)
+                                .textSelection(.enabled)
+                        }
+                        .font(.system(size: 13))
+                    }
+                }
+            }
+            let pb = s.playbook
+            if !pb.isEmpty {
+                let covered = pb.filter { $0.status == .covered }.count
+                Text("Template: \(covered) of \(pb.count) points covered" + (pb.contains { $0.status == .missing } ? " · missing: " + pb.filter { $0.status == .missing }.prefix(5).map(\.text).joined(separator: "; ") : ""))
+                    .font(.system(size: 12)).foregroundStyle(Aya.textMuted).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .ayaSurface()
     }
 
     // Recap
@@ -817,8 +1153,17 @@ private struct AssistReviewView: View {
                     if let ref = assist.config.list(.meetings) { Text("→ \(ref.label) in \(ref.workspaceLabel)").font(.system(size: 12)).foregroundStyle(Aya.textMuted) }
                 }
                 Spacer()
-                if let id = assist.record?.recapRecordID, !id.isEmpty { AyaTag(text: "In Aya", color: Aya.success, icon: "checkmark") }
-                Button { Task { await assist.draftRecap() } } label: {
+                if let id = assist.record?.recapRecordID, !id.isEmpty {
+                    AyaTag(text: "In Aya", color: Aya.success, icon: "checkmark")
+                    if let url = assist.ayaURL(.meetings, record: id) {
+                        Link(destination: url) { Label("Open in Aya", systemImage: "arrow.up.right.square") }
+                            .buttonStyle(AyaButtonStyle(kind: .secondary, pill: true))
+                            .help("Open this meeting in Aya")
+                    }
+                }
+                Button {
+                    if assist.recapFields.isEmpty { Task { await assist.draftRecap() } } else { confirmRedraft = true }
+                } label: {
                     Label(assist.recapFields.isEmpty ? "Draft Recap" : "Draft Again", systemImage: "sparkles")
                 }
                 .buttonStyle(AyaButtonStyle(kind: assist.recapFields.isEmpty ? .agent : .secondary, pill: true))
@@ -877,7 +1222,9 @@ private struct AssistReviewView: View {
                         .font(.system(size: 12)).foregroundStyle(Aya.textMuted)
                 }
                 Spacer()
-                Button { Task { await assist.proposeCRM() } } label: {
+                Button {
+                    if assist.crm == nil { Task { await assist.proposeCRM() } } else { confirmRepropose = true }
+                } label: {
                     Label(assist.crm == nil ? "Propose Updates" : "Propose Again", systemImage: "sparkles")
                 }
                 .buttonStyle(AyaButtonStyle(kind: assist.crm == nil ? .agent : .secondary, pill: true))
@@ -942,6 +1289,10 @@ private struct FieldEditor: View {
                 .padding(.leading, 20)
             }
             if field.include { editor(for: $field).padding(.leading, 20) }
+            if let note = field.reason {
+                Label(note, systemImage: "calendar.badge.exclamationmark")
+                    .font(.system(size: 11)).foregroundStyle(Aya.warning).padding(.leading, 20)
+            }
         }
     }
 }
@@ -1071,6 +1422,15 @@ enum AssistSnapshots {
             a.state = s
             a.status = .listening
             app.elapsed = 1342
+            var raws: [String: String] = [:]
+            app.liveLines = rec.lines.suffix(40).enumerated().map { i, l in
+                let mine = l.speaker == rec.context.myName || l.speaker == "Me"
+                let raw = mine ? "me" : (raws[l.speaker] ?? "system-\(raws.count)")
+                if !mine { raws[l.speaker] = raw }
+                return LiveLine(id: "snap\(i)", track: mine ? .mic : .system, start: l.start, end: l.start + 3,
+                                text: l.text, speaker: raw, isFinal: true)
+            }
+            a.state.speakerNames = Dictionary(uniqueKeysWithValues: raws.map { ($0.value, $0.key) })
             a.phase = .running
             render(ContentView(), app: app, size: CGSize(width: 1280, height: 860), to: dir.appendingPathComponent("2-live.png"), wait: 0.5)
             render(AssistBanner(assist: a).frame(width: 420), app: app, size: CGSize(width: 420, height: 90), to: dir.appendingPathComponent("4-banner.png"), wait: 0.3)
@@ -1086,8 +1446,23 @@ enum AssistSnapshots {
                                 contacts: [ContactProposal(contactID: nil, name: "Tobias Brandt", changes: [
                                     ProposedValue(key: "position__value", label: "Position", kind: .text, options: [], old: "", value: "IT, interne Tools", reason: nil, include: true)], include: true)])
             a.reviewTables = rec.tables ?? rec.state.tables ?? []
+            var sp: [String: Speaker] = [:]
+            let turns = rec.lines.enumerated().map { i, l in
+                let id = sp[l.speaker]?.id ?? "s\(sp.count)"
+                if sp[l.speaker] == nil {
+                    let me = l.speaker == rec.context.myName
+                    sp[l.speaker] = Speaker(id: id, label: me ? l.speaker : "Speaker \(sp.count + 1)", track: .system, embedding: nil, isMe: me)
+                }
+                return Turn(id: i, speaker: id, start: l.start, end: l.start + 4, text: l.text, track: .system, words: [])
+            }
+            a.reviewTranscript = Transcript(turns: turns, speakers: Array(sp.values), engine: "snapshot", createdAt: Date(), processingSeconds: 0)
             a.phase = .review("snapshot")
             render(ContentView(), app: app, size: CGSize(width: 1200, height: 900), to: dir.appendingPathComponent("3-review.png"), wait: 0.5)
+            render(ContentView(), app: app, size: CGSize(width: 1200, height: 1600), to: dir.appendingPathComponent("3-review-long.png"), wait: 0.5)
+            let person = rec.context.contacts.first?.name ?? "Speaker 2"
+            render(PersonPopover(assist: a, name: person, label: "Speaker 2", onRename: { _ in }), app: app,
+                   size: CGSize(width: 330, height: 420), to: dir.appendingPathComponent("7-person.png"), wait: 0.5)
+            render(ImportMeetingSheet(assist: a), app: app, size: CGSize(width: 560, height: 520), to: dir.appendingPathComponent("8-import.png"), wait: 0.5)
             if !a.reviewTables.isEmpty {
                 render(ReviewTablesSection(assist: a).frame(width: 1000), app: app, size: CGSize(width: 1000, height: 1250),
                        to: dir.appendingPathComponent("6-review-tables.png"), wait: 0.5)

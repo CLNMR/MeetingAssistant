@@ -58,6 +58,13 @@ public struct AyaListSchema: Codable, Hashable, Sendable {
     }
 
     public func field(_ key: String) -> AyaField? { fields.first { $0.key == key } }
+
+    /// The value that links a record to `id` through the relation field `key`: a list of ids for a
+    /// relations field (`…__ids`), a single id otherwise. Unknown fields are judged by their key.
+    public func linkValue(_ key: String, id: String) -> JSONValue {
+        let many = field(key).map { $0.kind == .relations } ?? key.hasSuffix("__ids")
+        return many ? .array([.string(id)]) : .string(id)
+    }
     public var writableContent: [AyaField] { fields.filter { $0.writable && $0.isContent } }
     public var relations: [AyaField] { fields.filter { $0.kind == .relation || $0.kind == .relations } }
 

@@ -126,6 +126,11 @@ public actor AssistEngine {
     private var pending: [AssistLine] = []
     private var history: [AssistLine] = []
     private var events: [String] = []
+    /// Events sent with the update that is still waiting for its answer. Carried into a new
+    /// conversation when this one restarts before answering.
+    private var unansweredEvents: [String] = []
+    /// How a yes/no table value is written ("ja"/"nein" in a German meeting).
+    private let yesNo: (yes: String, no: String)
     private var forceNow = false
     private var loop: Task<Void, Never>?
     private var eventPump: Task<Void, Never>?
@@ -142,7 +147,8 @@ public actor AssistEngine {
         self.publish = publish
         state.playbook = context.playbookItems
         state.tables = context.templateTables
-        // Known contacts are expected attendees until Claude says otherwise.
+        yesNo = context.yesNoWords
+        // Attendees start empty; Claude names them (known contacts reach it only through the context message).
         state.attendees = []
     }
 
@@ -245,7 +251,37 @@ public actor AssistEngine {
         if let n = speakerNames[raw] { return n }
         let n = "Speaker \(speakerNames.count + 1)"
         speakerNames[raw] = n
+        state.speakerNames = speakerNames
         return n
+    }
+
+    /// The user named a speaker of the live transcript. Earlier lines are relabelled, Claude is told,
+    /// and the person becomes a present attendee.
+    public func renameSpeaker(raw: String, to name: String) {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        let old = speakerNames[raw] ?? (raw == "me" ? (context.myName.isEmpty ? "Me" : context.myName) : nil)
+        guard old != name else { return }
+        speakerNames[raw] = name
+        state.speakerNames = speakerNames
+        if let old {
+            for i in history.indices where history[i].speaker == old { history[i].speaker = name }
+            for i in pending.indices where pending[i].speaker == old { pending[i].speaker = name }
+            events.append("user: the speaker labelled \"\(old)\" is \(name). Earlier lines of \"\(old)\" were said by \(name); "
+                          + "later lines use the name. Update the attendees and anything you attributed to \"\(old)\".")
+            // An attendee Claude matched to the old label is someone else now, unless it is the same person.
+            for i in state.attendees.indices where state.attendees[i].speaker == old && state.attendees[i].id != name.lowercased() {
+                state.attendees[i].speaker = nil
+            }
+        } else {
+            events.append("user: a speaker is \(name).")
+        }
+        let contact = context.contacts.first { $0.name.compare(name, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame }
+        var changed = state.apply(.attendee(.init(name: name, role: nil, company: nil, notes: nil, speaker: name,
+                                                  contactID: contact?.id, present: true)))
+        changed.append("speakers")
+        state.changed = Set(changed)
+        setStatus(status)
     }
 
     // MARK: User actions
@@ -347,8 +383,11 @@ public actor AssistEngine {
         let evs = events
         pending = []; events = []; forceNow = false
         history += lines
-        do { try send(AssistPrompts.tickMessage(lines: lines.map(\.rendered), events: evs.isEmpty && lines.isEmpty ? ["user asks: suggest a question now"] : evs)) }
-        catch {
+        do {
+            try send(AssistPrompts.tickMessage(lines: lines.map(\.rendered), events: evs.isEmpty && lines.isEmpty ? ["user asks: suggest a question now"] : evs,
+                                               summary: state.summary))
+            unansweredEvents = evs
+        } catch {
             pending = lines + pending; events = evs + events
             history.removeLast(lines.count)
             await restart(reason: "write failed")
@@ -372,8 +411,11 @@ public actor AssistEngine {
         let carry = pending.map(\.rendered)
         history += pending
         pending = []
+        // Events of an update that was never answered, and events still queued, go along too.
+        let evs = unansweredEvents + events
         events = []
-        await openConversation(first: AssistPrompts.resumeMessage(context, state: state, recent: recent + carry))
+        unansweredEvents = evs
+        await openConversation(first: AssistPrompts.resumeMessage(context, state: state, recent: recent + carry, events: evs))
     }
 
     // MARK: Output
@@ -398,6 +440,9 @@ public actor AssistEngine {
             if r.isError {
                 if ClaudeCLI.isUsageLimit(r.text) {
                     limitedUntil = Date().addingTimeInterval(300)
+                    // The events were not answered; send them again with the next update.
+                    events = unansweredEvents + events
+                    unansweredEvents = []
                     setStatus(.limited("Recording continues; retrying in 5 minutes."))
                 } else {
                     setStatus(.failed("Claude: \(r.text.prefix(200))"))
@@ -406,6 +451,7 @@ public actor AssistEngine {
                 return
             }
             state.updates += 1
+            unansweredEvents = []
             restarts = 0
             setStatus(paused ? .paused : .listening)
         case .exited(let code, let err):
@@ -424,7 +470,7 @@ public actor AssistEngine {
     }
 
     private func applyLine(_ line: String) {
-        guard var op = AssistOp.parse(line) else {
+        guard var op = AssistOp.parse(line, yesNo: yesNo) else {
             let t = line.trimmingCharacters(in: .whitespaces)
             if !t.isEmpty { log.debug("ignored output line: \(t.prefix(200))") }
             return

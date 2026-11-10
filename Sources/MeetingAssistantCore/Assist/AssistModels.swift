@@ -96,36 +96,46 @@ public struct AssistContext: Codable, Sendable {
         return parts.isEmpty ? "Meeting" : parts.joined(separator: " – ")
     }
 
-    /// Tracking, usage and bookkeeping fields that don't help in a conversation.
-    static func isTechnical(_ key: String) -> Bool {
-        let k = key.lowercased()
-        let parts = ["utm_", "gclid", "ga_client", "consent", "opt_out", "external_id", "ai_enriched", "sitzungen",
-                     "letzte_anmeldung", "erstellt_am", "createdat", "updatedat", "anz_", "aya_nutzer", "marketing",
-                     "ist_aktiviert", "ist_intern", "nutzungsphase", "aktivitaets", "beta_", "intern_manuell", "do_not_contact",
-                     "demo_reif", "source", "__record_spec", "kunde_praefix", "firma_unbekannt", "abrechnungskonten",
-                     "organisationen", "_at__value", "owner"]
-        return parts.contains { k.contains($0) }
+    /// Tracking, usage and bookkeeping fields that don't help in a conversation (same list as the CRM update uses).
+    static func isTechnical(_ key: String) -> Bool { TechnicalFields.contains(key) }
+
+    /// The template's language decides how yes/no answers are written: German when the template
+    /// (tables, agenda, notes) reads German; without a template, the client and earlier recaps decide.
+    public var isGerman: Bool {
+        var template = [playbookTitle ?? "", playbookGoal ?? ""] + playbookItems.map { $0.section + " " + $0.text } + (templateNotes ?? [])
+        for t in templateTables ?? [] { template += [t.prompt] + t.columns + t.rows.map { $0.cells.joined(separator: " ") } }
+        if let g = AssistLanguage.isGerman(template.joined(separator: "\n")) { return g }
+        let other = clientFieldList.map(\.value) + (projectFieldList ?? []).map(\.value) + recaps.flatMap { $0.fields.map(\.value) } + [goal]
+        return AssistLanguage.isGerman(other.joined(separator: "\n")) ?? false
+    }
+
+    /// The words a yes/no table answer becomes.
+    public var yesNoWords: (yes: String, no: String) { isGerman ? ("ja", "nein") : ("yes", "no") }
+
+    /// The fields of a record with content, labelled, without ids and bookkeeping.
+    public static func labeledValues(_ r: AyaRecord, schema: AyaListSchema?, skip: Set<String> = []) -> [LabeledValue] {
+        var out: [LabeledValue] = []
+        for (k, v) in r.values.sorted(by: { $0.key < $1.key }) {
+            guard !skip.contains(k), !v.isEmpty, !AssistContext.isTechnical(k) else { continue }
+            let f = schema?.field(k)
+            // Relation ids mean nothing to Claude; their titles do.
+            if k.hasSuffix("__id") || k.hasSuffix("__ids") || k.hasSuffix("_color") || k.hasSuffix("__file_count") { continue }
+            if ["id", "computedTitle", "createdBy", "modifiedBy", "locked"].contains(k) { continue }
+            let label = k.contains("__computed_title")
+                ? AyaField.humanize(k.components(separatedBy: "__").first ?? k)
+                : (f?.label ?? AyaField.humanize(k.components(separatedBy: "__").first ?? k))
+            var text = v.description
+            if k == "createdAt" || k == "updatedAt" || f?.kind == .datetime { text = String(text.prefix(10)) }
+            if k == "createdByTitle" || k == "modifiedByTitle" { continue }
+            out.append(LabeledValue(key: k, label: label, value: text))
+        }
+        return out
     }
 
     /// Builds the context from Aya records. Only fields with content are kept.
     public init(aya: AyaMeetingContext, config: AyaConfig, goal: String, mode: MeetingMode, myName: String, date: Date) {
         func values(_ r: AyaRecord, schema: AyaListSchema?, skip: Set<String> = []) -> [LabeledValue] {
-            var out: [LabeledValue] = []
-            for (k, v) in r.values.sorted(by: { $0.key < $1.key }) {
-                guard !skip.contains(k), !v.isEmpty, !AssistContext.isTechnical(k) else { continue }
-                let f = schema?.field(k)
-                // Relation ids mean nothing to Claude; their titles do.
-                if k.hasSuffix("__id") || k.hasSuffix("__ids") || k.hasSuffix("_color") || k.hasSuffix("__file_count") { continue }
-                if ["id", "computedTitle", "createdBy", "modifiedBy", "locked"].contains(k) { continue }
-                let label = k.contains("__computed_title")
-                    ? AyaField.humanize(k.components(separatedBy: "__").first ?? k)
-                    : (f?.label ?? AyaField.humanize(k.components(separatedBy: "__").first ?? k))
-                var text = v.description
-                if k == "createdAt" || k == "updatedAt" || f?.kind == .datetime { text = String(text.prefix(10)) }
-                if k == "createdByTitle" || k == "modifiedByTitle" { continue }
-                out.append(LabeledValue(key: k, label: label, value: text))
-            }
-            return out
+            AssistContext.labeledValues(r, schema: schema, skip: skip)
         }
         clientID = aya.client?.id
         clientTitle = aya.client?.title ?? ""
@@ -162,6 +172,41 @@ public struct AssistContext: Codable, Sendable {
                                                       "createdAt", "updatedAt"]))
         }
         self.goal = goal; self.mode = mode; self.myName = myName; self.date = date
+    }
+}
+
+/// Fields that are tracking, usage or bookkeeping data. They are hidden from Claude's context and
+/// never proposed as CRM updates. Matched as parts of the lower-cased record key.
+public enum TechnicalFields {
+    public static let parts = [
+        "utm_", "gclid", "ga_client", "consent", "opt_out", "do_not_contact", "external_id", "ai_enriched", "provenienz", "source",
+        "marketing", "sitzungen", "letzte_anmeldung", "erstellt_am", "createdat", "updatedat", "_at__", "anz_", "aya_nutzer",
+        "ist_aktiviert", "ist_intern", "nutzungsphase", "aktivitaets", "beta_", "intern_manuell", "demo_reif",
+        "__record_spec", "praefix", "unbekannt", "abrechnungskonten", "organisationen", "owner",
+    ]
+    public static func contains(_ key: String) -> Bool {
+        let k = key.lowercased()
+        return parts.contains { k.contains($0) }
+    }
+}
+
+/// A rough German/English guess from common words, for choosing the words the app itself writes.
+public enum AssistLanguage {
+    static let german: Set<String> = ["der", "die", "das", "und", "ist", "nicht", "wir", "ihr", "ihre", "mit", "für", "ein", "eine",
+                                      "wie", "was", "welche", "welcher", "haben", "nutzen", "oder", "auf", "zu", "im", "bei", "sie",
+                                      "es", "von", "den", "dem", "ja", "nein", "heute", "aktuell", "kunde", "vorschlag"]
+    static let english: Set<String> = ["the", "and", "is", "not", "we", "you", "your", "with", "for", "a", "an", "how", "what",
+                                       "which", "have", "use", "or", "on", "to", "in", "at", "they", "it", "of", "yes", "no",
+                                       "today", "current", "customer", "proposal"]
+
+    /// true for German, false for English, nil when the text gives no signal.
+    public static func isGerman(_ text: String) -> Bool? {
+        let words = text.lowercased().split { !$0.isLetter }.map(String.init)
+        var de = words.filter { german.contains($0) }.count
+        let en = words.filter { english.contains($0) }.count
+        de += text.filter { "äöüß".contains($0) }.count > 0 ? 1 : 0
+        if de == 0 && en == 0 { return nil }
+        return de >= en
     }
 }
 
@@ -202,6 +247,9 @@ public struct AssistState: Codable, Sendable, Equatable {
     public var playbook: [PlaybookItem] = []
     /// The template's fill-in tables with what was answered so far (nil before tables existed).
     public var tables: [TemplateTable]?
+    /// Live speaker label ("system-1") → the name shown and sent to Claude ("Speaker 2", or the
+    /// name the user gave). nil in records from before speaker names.
+    public var speakerNames: [String: String]?
     public var updates = 0
     public var costUSD = 0.0                        // API-equivalent cost, reported by the CLI
     public var changed: Set<String> = []            // ids touched by the latest update (for highlighting)
@@ -220,7 +268,8 @@ public enum AssistOp: Equatable, Sendable {
     case tableCell(row: String, column: String, value: String, evidence: String?)
 
     /// Parses one output line. Returns nil for anything that isn't a valid op (prose, fences, partial JSON).
-    public static func parse(_ line: String) -> AssistOp? {
+    /// A boolean table value becomes `yesNo` (the meeting's words for yes and no).
+    public static func parse(_ line: String, yesNo: (yes: String, no: String) = ("yes", "no")) -> AssistOp? {
         var s = line.trimmingCharacters(in: .whitespaces)
         if s.hasPrefix("```") || s.isEmpty { return nil }
         if s.hasSuffix(",") { s.removeLast() }
@@ -255,7 +304,10 @@ public enum AssistOp: Equatable, Sendable {
             guard let item = str("item"), let st = PlaybookItem.Status(rawValue: str("status") ?? "") else { return nil }
             return .playbook(item: item, status: st, evidence: str("evidence"))
         case "table_cell":
-            let value = v["value"].map { $0.string ?? ($0.isNull ? "" : $0.description) }?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let value = v["value"].map { j -> String in
+                if let b = j.bool { return b ? yesNo.yes : yesNo.no }
+                return j.string ?? (j.isNull ? "" : j.description)
+            }?.trimmingCharacters(in: .whitespacesAndNewlines)
             guard let row = str("row"), let column = str("column"), let value, !value.isEmpty else { return nil }
             return .tableCell(row: row, column: column, value: value, evidence: str("evidence"))
         default:

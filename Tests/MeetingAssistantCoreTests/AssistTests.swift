@@ -411,3 +411,100 @@ import Testing
         #expect(summary.contains("| Sales | CRM |  | ja |"))
     }
 }
+
+@Suite struct AssistConsistencyTests {
+    static func germanTable() -> TemplateTable {
+        TemplateTable(id: "T1", section: "Systeme", prompt: "Welche Module nutzen Sie heute und welche sind für Sie relevant?",
+                      columns: ["Bereich", "Modul", "Relevant für uns"], answerColumns: [2],
+                      rows: [.init(id: "T1.1", cells: ["Vertrieb", "CRM", ""])])
+    }
+
+    @Test func systemPromptCountsSixPanelsAndNamesRealEvents() {
+        #expect(AssistPrompts.system.contains("Keep six panels up to date"))
+        #expect(!AssistPrompts.system.contains("dismissed open point"))
+        #expect(AssistPrompts.system.contains("[user set open point O2 to parked]"))
+    }
+
+    @Test func booleanTableValuesUseTheMeetingLanguage() {
+        let line = #"{"op":"table_cell","row":"T1.1","column":"Relevant für uns","value":true}"#
+        #expect(AssistOp.parse(line) == .tableCell(row: "T1.1", column: "Relevant für uns", value: "yes", evidence: nil))
+        #expect(AssistOp.parse(line, yesNo: ("ja", "nein")) == .tableCell(row: "T1.1", column: "Relevant für uns", value: "ja", evidence: nil))
+        #expect(AssistOp.parse(#"{"op":"table_cell","row":"T1.1","column":"x","value":false}"#, yesNo: ("ja", "nein"))
+                == .tableCell(row: "T1.1", column: "x", value: "nein", evidence: nil))
+
+        var c = AssistIngestTests.context()
+        #expect(c.yesNoWords == ("yes", "no"))                      // no signal: English
+        c.templateTables = [Self.germanTable()]
+        #expect(c.isGerman && c.yesNoWords == ("ja", "nein"))
+        c.templateTables = [TemplateTable(id: "T1", section: "Systems", prompt: "Which modules do you use today, and which matter to you?",
+                                          columns: ["Area", "Module", "Relevant"], answerColumns: [2], rows: [])]
+        #expect(!c.isGerman)
+        // Without a template the client's data decides.
+        c.templateTables = nil
+        c.clientFieldList = [.init(key: "notiz__value", label: "Notiz", value: "Der Kunde nutzt heute ein eigenes System und ist mit dem Lager nicht zufrieden.")]
+        #expect(c.isGerman)
+    }
+
+    @Test func oneListOfTechnicalFields() {
+        let s = AyaListSchema(workspaceId: "W", techName: "firma", fields: [
+            AyaField(key: "branche__value", kind: .text, writable: true),
+            AyaField(key: "provenienz__value", kind: .text, writable: true),
+            AyaField(key: "marketing_status__value", kind: .text, writable: true),
+            AyaField(key: "owner_name__value", kind: .text, writable: true),
+            AyaField(key: "lead_source__value", kind: .text, writable: true),
+            AyaField(key: "kunde_praefix__value", kind: .text, writable: true),
+            AyaField(key: "utm_campaign__value", kind: .text, writable: true),
+        ])
+        let editable = RecapBuilder.editableFields(s).map(\.key)
+        #expect(editable == ["branche__value"])
+        // The live context hides exactly the same fields.
+        for f in s.fields { #expect(AssistContext.isTechnical(f.key) == !editable.contains(f.key)) }
+        let r = AyaRecord(values: Dictionary(uniqueKeysWithValues: s.fields.map { ($0.key, JSONValue.string("x")) }))
+        #expect(AssistContext.labeledValues(r, schema: s).map(\.key) == ["branche__value"])
+    }
+
+    @Test func newContactLinkFollowsTheFieldShape() {
+        let fields = [AyaField(key: "first_name__value", kind: .text, writable: true)]
+        let proposal = ContactProposal(contactID: nil, name: "Max Beispiel", changes: [
+            ProposedValue(key: "first_name__value", label: "First name", kind: .text, options: [], old: "", value: "Max", reason: nil, include: true)],
+                                       include: true)
+        let one = AyaListSchema(workspaceId: "W", techName: "person", fields: fields + [AyaField(key: "firma__id", kind: .relation, writable: true)])
+        #expect(RecapBuilder.newContactValues(proposal, clientID: "C1", link: "firma__id", schema: one)
+                == ["first_name__value": .string("Max"), "firma__id": .string("C1")])
+        let many = AyaListSchema(workspaceId: "W", techName: "person", fields: fields + [AyaField(key: "firmen__ids", kind: .relations, writable: true)])
+        #expect(RecapBuilder.newContactValues(proposal, clientID: "C1", link: "firmen__ids", schema: many)["firmen__ids"] == .array([.string("C1")]))
+        // Unknown to the schema: judged by the key.
+        #expect(one.linkValue("other__ids", id: "C1") == .array([.string("C1")]))
+        // Nothing ticked: nothing to create.
+        var none = proposal; none.changes[0].include = false
+        #expect(RecapBuilder.newContactValues(none, clientID: "C1", link: "firma__id", schema: one).isEmpty)
+    }
+
+    @Test func specsOfAllWorkspacesAreMerged() {
+        let a = AyaWorkspace(id: "WA", slug: "sales"), b = AyaWorkspace(id: "WB", slug: "projects")
+        let merged = AyaService.mergeSpecs([
+            (a, [AyaRecordSpec(id: "1", techName: "firma", workspaceId: "WA", localizedLabel: ["en": "Companies"]),
+                 AyaRecordSpec(id: "2", techName: "pmMeetings", workspaceId: "WB", localizedLabel: ["en": "Meetings"]),
+                 AyaRecordSpec(id: "9", techName: "user", workspaceId: "WA", localizedLabel: ["en": "Users"], isSystem: true)]),
+            (b, [AyaRecordSpec(id: "2", techName: "pmMeetings", workspaceId: "WB", localizedLabel: ["en": "Meetings"]),
+                 AyaRecordSpec(id: "3", techName: "pmProjects", workspaceId: nil, localizedLabel: ["en": "Projects"]),
+                 AyaRecordSpec(id: "4", techName: "firma", workspaceId: "WB", localizedLabel: ["en": "Companies"])]),
+        ])
+        #expect(merged.map { "\($0.label)@\($0.workspaceId ?? "")" } == ["Companies@WA", "Companies@WB", "Meetings@WB", "Projects@WB"])
+    }
+
+    @Test func resumeMessageCarriesEventsAndDropsTheStartInstruction() {
+        let c = AssistIngestTests.context()
+        #expect(AssistPrompts.contextMessage(c).hasSuffix(AssistPrompts.startInstruction))
+        var st = AssistState(); st.summary = ["Lager: zu klein"]
+        let m = AssistPrompts.resumeMessage(c, state: st, recent: ["[00:00:01] Erika: Hallo"], events: ["user set open point O1 to parked"])
+        #expect(!m.contains(AssistPrompts.startInstruction))
+        #expect(m.contains("THE MEETING IS ALREADY RUNNING"))
+        #expect(m.contains("[user set open point O1 to parked]"))
+        #expect(m.hasPrefix(AssistPrompts.contextBody(c)))
+    }
+
+    @Test func timeoutHasItsOwnError() {
+        #expect(ClaudeCLI.CLIError.timedOut(600).errorDescription == "Claude did not answer within 600 s.")
+    }
+}

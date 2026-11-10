@@ -14,12 +14,25 @@ struct Preferences: Codable, Equatable {
     var defaultMode: MeetingMode = .call
     var dictationEnabled = true
     var dictationHotKey: HotKey? = .rightOption
+    /// Scribe+: the dictation is cleaned up by a fast Claude model before it is pasted.
+    var scribePlusHotKey: HotKey? = .rightOptionCommand
+    /// Scribe+ sees the text around the cursor and the app's name, to match tone and context.
+    var scribePlusContext = true
+    /// Keep one Claude process started in the background, so Scribe+ answers in about a second.
+    var scribePlusWarm = true
+    /// "sonnet" (careful, 2–4 s) or "haiku" (fastest, about 1 s).
+    var scribePlusModel = ScribePlus.model
+    /// Spaces and capitals follow the text around the cursor.
+    var fitToCursor = true
+    /// Mute the sound output while dictating (not during a recording).
+    var muteWhileDictating = true
 
     init() {}
 
     enum CodingKeys: String, CodingKey {
         case engine, language, myName, inputDeviceUID, liveTranscription, autoTranscribe, defaultMode
         case dictationEnabled, dictationHotKey
+        case scribePlusHotKey, scribePlusContext, scribePlusWarm, scribePlusModel, fitToCursor, muteWhileDictating
     }
 
     // Missing keys fall back to defaults so new settings never reset the old ones.
@@ -35,6 +48,12 @@ struct Preferences: Codable, Equatable {
         defaultMode = (try? c.decodeIfPresent(MeetingMode.self, forKey: .defaultMode)) ?? d.defaultMode
         dictationEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .dictationEnabled)) ?? d.dictationEnabled
         dictationHotKey = c.contains(.dictationHotKey) ? (try? c.decodeIfPresent(HotKey.self, forKey: .dictationHotKey)) : d.dictationHotKey
+        scribePlusHotKey = c.contains(.scribePlusHotKey) ? (try? c.decodeIfPresent(HotKey.self, forKey: .scribePlusHotKey)) : d.scribePlusHotKey
+        scribePlusContext = (try? c.decodeIfPresent(Bool.self, forKey: .scribePlusContext)) ?? d.scribePlusContext
+        scribePlusWarm = (try? c.decodeIfPresent(Bool.self, forKey: .scribePlusWarm)) ?? d.scribePlusWarm
+        scribePlusModel = (try? c.decodeIfPresent(String.self, forKey: .scribePlusModel)) ?? d.scribePlusModel
+        fitToCursor = (try? c.decodeIfPresent(Bool.self, forKey: .fitToCursor)) ?? d.fitToCursor
+        muteWhileDictating = (try? c.decodeIfPresent(Bool.self, forKey: .muteWhileDictating)) ?? d.muteWhileDictating
     }
 
     func encode(to encoder: Encoder) throws {
@@ -48,6 +67,12 @@ struct Preferences: Codable, Equatable {
         try c.encode(defaultMode, forKey: .defaultMode)
         try c.encode(dictationEnabled, forKey: .dictationEnabled)
         try c.encode(dictationHotKey, forKey: .dictationHotKey)   // explicit null = "no shortcut"
+        try c.encode(scribePlusHotKey, forKey: .scribePlusHotKey)
+        try c.encode(scribePlusContext, forKey: .scribePlusContext)
+        try c.encode(scribePlusWarm, forKey: .scribePlusWarm)
+        try c.encode(scribePlusModel, forKey: .scribePlusModel)
+        try c.encode(fitToCursor, forKey: .fitToCursor)
+        try c.encode(muteWhileDictating, forKey: .muteWhileDictating)
     }
 
     static let key = "preferences.v1"
@@ -83,12 +108,16 @@ final class AppState: ObservableObject {
         didSet {
             guard prefs != oldValue else { return }
             prefs.save()
-            if prefs.dictationEnabled != oldValue.dictationEnabled || prefs.dictationHotKey != oldValue.dictationHotKey {
+            if prefs.dictationEnabled != oldValue.dictationEnabled || prefs.dictationHotKey != oldValue.dictationHotKey
+                || prefs.scribePlusHotKey != oldValue.scribePlusHotKey || prefs.scribePlusWarm != oldValue.scribePlusWarm
+                || prefs.scribePlusModel != oldValue.scribePlusModel {
                 applyDictationShortcut()
             }
         }
     }
     @Published var sessions: [SessionInfo] = []
+    /// Sessions recorded or imported in Assist mode (they have an assist.json).
+    @Published var assistSessionIDs: Set<String> = []
     @Published var appMode = AppMode(rawValue: UserDefaults.standard.string(forKey: "appMode") ?? "") ?? .scribe {
         didSet { UserDefaults.standard.set(appMode.rawValue, forKey: "appMode") }
     }
@@ -115,7 +144,11 @@ final class AppState: ObservableObject {
     // Push-to-talk dictation
     let dictation = DictationController()
     private let hotKey = GlobalHotKey()
+    private let plusHotKey = GlobalHotKey()
     @Published var hotKeyError: String?
+    @Published var vocabulary = Vocabulary.load() {
+        didSet { if vocabulary != oldValue { vocabulary.save(); dictation.vocabulary = vocabulary } }
+    }
 
     // Floating always-on live transcript
     let listen = ListenController()
@@ -132,6 +165,8 @@ final class AppState: ObservableObject {
     private var live: LiveTranscriber?
     private var meterTimer: Timer?
     private var queue: [String] = []
+    /// Engine chosen for one run ("Transcribe Again" with an engine); the preference stays as it is.
+    private var engineOverride: [String: ASREngineKind] = [:]
     private var worker: Task<Void, Never>?
 
     init() {
@@ -143,11 +178,22 @@ final class AppState: ObservableObject {
         if let id = UserDefaults.standard.string(forKey: "select") { selection = .session(id) }
         // Recover sessions interrupted by a crash or quit.
         for var s in sessions where [.recording, .transcribing, .queued].contains(s.status) {
-            if s.status == .recording { s.status = .recorded; try? SessionStore.save(s) } else { enqueue(s.id) }
+            if s.status == .recording { s = SessionStore.recoverInterrupted(s); try? SessionStore.save(s) } else { enqueue(s.id) }
         }
         reload()
         setUpDictation()
+        _ = assist      // loads the Aya lists (and the vocabulary's names) when Aya is connected
         listen.state = self
+        if let file = UserDefaults.standard.string(forKey: "dictationTest"),
+           let out = UserDefaults.standard.string(forKey: "dictationTestOut") {
+            // Debug: run an audio file through the dictation path with timings, then quit.
+            let plus = UserDefaults.standard.string(forKey: "dictationTestMode") != "plain"
+            let runs = max(1, UserDefaults.standard.integer(forKey: "dictationTestRuns"))
+            Task {
+                await dictation.runTest(file: URL(fileURLWithPath: file), plus: plus, out: URL(fileURLWithPath: out), runs: runs)
+                exit(0)
+            }
+        }
         if let dir = UserDefaults.standard.string(forKey: "assistSnapshot") {
             // Debug: render the Assist screens with sample data to PNGs and quit (used for testing).
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
@@ -163,7 +209,10 @@ final class AppState: ObservableObject {
         }
     }
 
-    func reload() { sessions = SessionStore.list() }
+    func reload() {
+        sessions = SessionStore.list()
+        assistSessionIDs = Set(sessions.map(\.id).filter { FileManager.default.fileExists(atPath: AssistRecord.url($0).path) })
+    }
     func refreshDevices() { inputDevices = AudioDevices.inputDevices() }
 
     var selectedDeviceID: AudioObjectID? {
@@ -175,9 +224,19 @@ final class AppState: ObservableObject {
 
     private func setUpDictation() {
         dictation.deviceID = { [weak self] in self?.selectedDeviceID }
-        hotKey.onPress = { [weak self] in self?.dictation.begin() }
+        dictation.prefs = { [weak self] in self?.prefs ?? Preferences() }
+        dictation.isBusyRecording = { [weak self] in self?.isRecording ?? false }
+        dictation.claudeBinary = { [weak self] in
+            guard let self else { return nil }
+            return self.assist.claudeBinary ?? ClaudeCLI.locate(preferred: self.assist.settings.claudePath)
+        }
+        dictation.vocabulary = vocabulary
+        hotKey.onPress = { [weak self] in self?.dictation.begin(.plain) }
         hotKey.onRelease = { [weak self] in self?.dictation.end() }
         hotKey.onCancel = { [weak self] in self?.dictation.cancel() }
+        plusHotKey.onPress = { [weak self] in self?.dictation.begin(.plus) }
+        plusHotKey.onRelease = { [weak self] in self?.dictation.end() }
+        plusHotKey.onCancel = { [weak self] in self?.dictation.cancel() }
         applyDictationShortcut()
         // A lone modifier key is only visible to the app once Accessibility is granted.
         dictation.watchTrust { [weak self] in self?.applyDictationShortcut() }
@@ -188,12 +247,14 @@ final class AppState: ObservableObject {
 
     func applyDictationShortcut() {
         hotKey.register(prefs.dictationEnabled ? prefs.dictationHotKey : nil)
-        hotKeyError = hotKey.registrationError
+        plusHotKey.register(prefs.dictationEnabled ? prefs.scribePlusHotKey : nil)
+        hotKeyError = hotKey.registrationError ?? plusHotKey.registrationError
+        dictation.updateSpare()
     }
 
-    /// Pause the global shortcut while the user records a new one in Settings.
+    /// Pause the global shortcuts while the user records a new one in Settings.
     func suspendDictationShortcut(_ suspend: Bool) {
-        if suspend { hotKey.unregister() } else { applyDictationShortcut() }
+        if suspend { hotKey.unregister(); plusHotKey.unregister() } else { applyDictationShortcut() }
     }
 
     // MARK: - Recording
@@ -303,7 +364,9 @@ final class AppState: ObservableObject {
             setStatus(id, .transcribing)
             progress[id] = JobProgress(fraction: 0, message: "Starting")
             do {
-                _ = try await TranscriptionPipeline.run(sessionID: id, settings: prefs.pipelineSettings) { p, msg in
+                var settings = prefs.pipelineSettings
+                if let e = engineOverride.removeValue(forKey: id) { settings.engine = e }
+                _ = try await TranscriptionPipeline.run(sessionID: id, settings: settings) { p, msg in
                     Task { @MainActor [weak self] in
                         if self?.progress[id] != nil { self?.progress[id] = JobProgress(fraction: p, message: msg) }
                     }
@@ -329,6 +392,7 @@ final class AppState: ObservableObject {
         worker?.cancel()
         for id in queue { setStatus(id, .recorded) }
         queue.removeAll()
+        engineOverride.removeAll()
     }
 
     private func setStatus(_ id: String, _ status: SessionInfo.Status) {
@@ -398,12 +462,13 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Transcribe a session again with a chosen engine and spoken language.
+    /// Transcribe a session again with a chosen engine and spoken language. The engine applies to
+    /// this run only; the language is saved with the recording.
     func retranscribe(_ id: String, engine: ASREngineKind, language: TranscriptLanguage) {
         guard var s = try? JSONIO.read(SessionInfo.self, from: AppPaths.info(id)) else { return }
         s.language = language == .auto ? nil : language.rawValue
         try? SessionStore.save(s)
-        prefs.engine = engine
+        engineOverride[id] = engine
         enqueue(id)
     }
 

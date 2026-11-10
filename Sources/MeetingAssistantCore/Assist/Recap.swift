@@ -13,6 +13,10 @@ public struct AssistRecord: Codable, Sendable {
     public var createdContactIDs: [String] = []
     /// The template's tables after the meeting (completed by Claude, edited by the user).
     public var tables: [TemplateTable]?
+    /// The recap as last drafted or edited, so it is still there when the meeting is opened again.
+    public var recapDraft: [ProposedValue]?
+    /// Live speaker names were carried over to the final transcript once.
+    public var speakersCarried: Bool?
 
     public init(context: AssistContext, state: AssistState, lines: [AssistLine]) {
         self.context = context; self.state = state; self.lines = lines
@@ -117,10 +121,21 @@ public enum RecapBuilder {
         let r = try await ClaudeCLI.oneShot(binary: binary, system: AssistPrompts.recapSystem, prompt: prompt,
                                             model: model, effort: "medium", schema: objectSchema(fields))
         guard let out = r.structured?.object else { throw ClaudeCLI.CLIError.failed("no structured recap returned") }
+        let spoken = transcript.joined(separator: "\n")
         let drafted = fields.map { f in
             let v = out[f.key] ?? .null
+            var value = v.isNull ? "" : v.description
+            var note: String?
+            // Deadlines nobody said are taken out again, and the user is told.
+            if f.kind == .markdown || f.kind == .text {
+                let checked = DeadlineCheck.filter(value, transcript: spoken)
+                if !checked.removed.isEmpty {
+                    value = checked.text
+                    note = "Removed deadlines not said in the meeting: " + checked.removed.map { "“\($0)”" }.joined(separator: ", ")
+                }
+            }
             return ProposedValue(key: f.key, label: f.label, kind: f.kind, options: f.options, old: "",
-                                 value: v.isNull ? "" : v.description, reason: nil, include: !v.isEmpty)
+                                 value: value, reason: note, include: !v.isEmpty)
         }
         return target(drafted, existing: existing)
     }
@@ -163,8 +178,8 @@ public enum RecapBuilder {
         fill(config.meetingTitleField, .string(c.title))
         if let t = c.meetingType, schema.coerce(.string(t), for: config.meetingTypeField) != nil { fill(config.meetingTypeField, .string(t)) }
         func link(_ key: String?, _ id: String?) {
-            guard let key, let id, let f = schema.field(key) else { return }
-            fill(key, f.kind == .relations ? .array([.string(id)]) : .string(id))
+            guard let key, let id, schema.field(key) != nil else { return }
+            fill(key, schema.linkValue(key, id: id))
         }
         link(config.meetingClientField, c.clientID)
         link(config.meetingProjectField, c.projectID)
@@ -238,15 +253,22 @@ public enum RecapBuilder {
     // MARK: CRM
 
     /// Fields of a CRM record Claude may change: plain text, numbers, booleans and selects,
-    /// minus technical fields.
+    /// minus technical fields (the same `TechnicalFields` that are hidden from the live context).
     static func editableFields(_ schema: AyaListSchema) -> [AyaField] {
-        let technical = ["utm", "gclid", "ga_client", "consent", "opt_out", "external_id", "ai_enriched", "provenienz",
-                         "sitzungen", "letzte_anmeldung", "erstellt_am", "_at__", "beta_", "intern_manuell", "do_not_contact",
-                         "praefix", "unbekannt"]
-        return schema.writableContent.filter { f in
+        schema.writableContent.filter { f in
             f.kind != .datetime && f.kind != .date && !(f.kind == .select && f.options.isEmpty)
-                && !technical.contains { f.key.contains($0) }
+                && !TechnicalFields.contains(f.key)
         }
+    }
+
+    /// Values for creating a contact from a proposal: the ticked fields plus the link to the client,
+    /// written as an id or a list of ids depending on the link field.
+    public static func newContactValues(_ c: ContactProposal, clientID: String?, link: String?, schema: AyaListSchema) -> [String: JSONValue] {
+        var values: [String: JSONValue] = [:]
+        for ch in c.changes where ch.include { if let v = schema.coerce(.string(ch.value), for: ch.key) { values[ch.key] = v } }
+        guard !values.isEmpty else { return values }
+        if let link, let clientID { values[link] = schema.linkValue(link, id: clientID) }
+        return values
     }
 
     static func newContactFields(_ schema: AyaListSchema) -> [AyaField] {

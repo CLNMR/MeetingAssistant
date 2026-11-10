@@ -2,24 +2,41 @@ import AVFoundation
 import Foundation
 import MeetingAssistantCore
 
-// Command-line companion used for testing the capture and the pipeline without the GUI.
-//   msctl record <seconds> [call|inPerson|hybrid] [--mute]
-//   msctl devices
+// Command-line companion used for testing capture, the pipeline, dictation and Assist without the
+// GUI. `msctl` without arguments prints all commands (the same list as the README).
 
 setvbuf(stdout, nil, _IONBF, 0)
 let args = CommandLine.arguments.dropFirst()
 func usage() -> Never {
     print("""
     usage:
-      msctl devices | perm | taptest <seconds> [--mute]
+      Capture
+      msctl devices | perm                      input devices · microphone permission
+      msctl taptest <seconds> [--mute]          check system-audio capture
+      msctl mictest [seconds] [default]         capture the mic the live listener would use
       msctl record <seconds> [call|inPerson|hybrid] [--mute]
-      msctl import <mic.wav> [system.wav] [call|inPerson|hybrid] [--speakers N]
+      Sessions
+      msctl import <mic.wav> [system.wav] [call|inPerson|hybrid] [--speakers N]   -> session id
       msctl transcribe <session-id> [qwen|parakeet] [auto|german|english]
       msctl enroll <voice.wav> [name]
       msctl export <session-id> md|txt|srt|json
       msctl trim <session-id> <start> <end> | split <session-id> <seconds>
-      msctl aya …      (Aya connection, see `msctl aya`)
-      msctl assist …   (Assist engine and recaps, see `msctl assist`)
+      msctl livetest <mic.wav> [system.wav] [call|inPerson|hybrid]   live mode at 4x speed
+      Speech models
+      msctl asr qwen|parakeet auto|german|english <files...>
+      msctl memtest <audio>                     GPU memory with Qwen3 loaded and unloaded
+      Dictation and vocabulary
+      msctl dictate <audio> [seconds] [--plus] [--before <text>] [--app <name>] [--model sonnet|haiku] [--warm <s>]
+      msctl vocab <session-id>                  what the vocabulary would change in a transcript
+      Aya and Assist (details: `msctl aya`, `msctl assist`)
+      msctl aya setup <orgId> | list <slot> | upcoming [days] | context [--meeting|--client|--project|--template <id>]
+      msctl assist check
+      msctl assist replay <session-id> [--meeting|--client|--project|--template <id>] [--speed N] [--minutes M]
+                          [--model opus|sonnet|haiku] [--save file]
+      msctl assist live <session-id> [--meeting|--client|--project|--template <id>] [--minutes M]
+      msctl assist recap|crm <session-id> [--record file]
+      msctl assist tables <session-id> [--record file]
+    Set MEETINGASSISTANT_HOME=<dir> to keep test data out of the app's storage.
     """)
     exit(2)
 }
@@ -60,6 +77,7 @@ case "transcribe":
     guard args.count >= 2 else { usage() }
     let id = args[args.startIndex + 1]
     var settings = PipelineSettings()
+    if args.contains("qwen") { settings.engine = .qwen3Large }
     if args.contains("parakeet") { settings.engine = .parakeetUltra }
     if let l = args.compactMap({ TranscriptLanguage(rawValue: $0) }).first { settings.language = l }
     let sem = DispatchSemaphore(value: 0)
@@ -119,22 +137,72 @@ case "asr":
     }
     sem.wait()
 case "dictate":
-    // msctl dictate <file> [seconds]  -> push-to-talk path on the first N seconds, with latency
+    // msctl dictate <file> [seconds] [--plus] [--before <text>] [--app <name>]
+    //   -> the push-to-talk path (vocabulary, spoken forms, optional Scribe+), with latency
     guard args.count >= 2 else { usage() }
+    let rest = Array(args.dropFirst(2))
+    let plus = rest.contains("--plus")
+    func flag(_ name: String) -> String? { rest.firstIndex(of: name).flatMap { rest.indices.contains($0 + 1) ? rest[$0 + 1] : nil } }
     let sem = DispatchSemaphore(value: 0)
     Task {
         do {
             var s = try AudioIO.load16k(URL(fileURLWithPath: args[args.startIndex + 1]))
-            if args.count >= 3, let n = Double(args[args.startIndex + 2]) { s = Array(s.prefix(Int(n * 16_000))) }
+            if let first = rest.first, let n = Double(first) { s = Array(s.prefix(Int(n * 16_000))) }
             _ = try await ModelStore.shared.parakeetManager()
+            var session: ScribePlusSession?
+            if plus {
+                guard let bin = ClaudeCLI.locate() else { print("error: claude not found"); sem.signal(); return }
+                session = try ScribePlusSession(binary: bin, model: flag("--model") ?? ScribePlus.model)
+                try await Task.sleep(for: .seconds(Double(flag("--warm") ?? "2.5") ?? 2.5))   // as if the user were still speaking
+            }
             let t0 = Date()
-            let text = try await ModelStore.shared.dictate(s)
-            print(text)
-            FileHandle.standardError.write(String(format: "%.1f s audio -> %.0f ms\n", Double(s.count) / 16_000, Date().timeIntervalSince(t0) * 1000).data(using: .utf8)!)
+            let voiced = InventedText.longestVoicedRun(s)
+            let raw = try await ModelStore.shared.dictate(s)
+            let t1 = Date()
+            if InventedText.isInvented(raw, longestVoicedRun: voiced) { print("(invented: \(raw))"); sem.signal(); return }
+            var text = SpokenForms.apply(Vocabulary.load().matcher().apply(raw))
+            print("raw:   \(raw)")
+            print("plain: \(text)")
+            if let session {
+                let v = Vocabulary.load()
+                let prompt = ScribePlus.prompt(transcript: text, app: flag("--app"), before: flag("--before"), after: nil,
+                                               vocabulary: ScribePlus.relevantTerms(text, own: v.terms, aya: v.useAya ? v.ayaTerms : []))
+                let tc = Date()
+                let out = ScribePlus.withoutEchoedContext(ScribePlus.unwrapped(try await session.rewrite(prompt)), before: flag("--before"))
+                FileHandle.standardError.write(String(format: "claude %.0f ms\n", Date().timeIntervalSince(tc) * 1000).data(using: .utf8)!)
+                if let p = ScribePlus.problem(in: out, source: text) { print("(rejected: \(p)) \(out)") } else { text = out }
+                print("plus:  \(text)")
+            }
+            if let b = flag("--before") { print("fit:   \(InsertionFit.fit(text, before: b, after: ""))") }
+            FileHandle.standardError.write(String(format: "%.1f s audio, voiced run %.2f s -> asr %.0f ms, total %.0f ms\n",
+                                                  Double(s.count) / 16_000, voiced, t1.timeIntervalSince(t0) * 1000,
+                                                  Date().timeIntervalSince(t0) * 1000).data(using: .utf8)!)
         } catch { print("error: \(error)") }
         sem.signal()
     }
     sem.wait()
+case "vocab":
+    // msctl vocab <session-id>  -> what the vocabulary would change in a transcript (nothing is saved)
+    guard args.count >= 2, let t = try? JSONIO.read(Transcript.self, from: AppPaths.transcript(args[args.startIndex + 1])) else { usage() }
+    let v = Vocabulary.load()
+    print("\(v.activeTerms.count) terms, \(v.replacements.count) replacements")
+    let m = v.matcher()
+    var changes: [String: Int] = [:]
+    for turn in t.turns {
+        let before = turn.words.map(\.w), after = m.apply(turn.words).map(\.w)
+        guard before != after else { continue }
+        // Report changed stretches.
+        let a = before.joined(separator: " "), b = after.joined(separator: " ")
+        let wa = a.split(separator: " "), wb = b.split(separator: " ")
+        var i = 0
+        while i < wa.count, i < wb.count, wa[i] == wb[i] { i += 1 }
+        var ja = wa.count - 1, jb = wb.count - 1
+        while ja >= i, jb >= i, wa[ja] == wb[jb] { ja -= 1; jb -= 1 }
+        let from = ja >= i ? wa[i...ja].joined(separator: " ") : "", to = jb >= i ? wb[i...jb].joined(separator: " ") : ""
+        changes["\(from) → \(to)", default: 0] += 1
+    }
+    for (c, n) in changes.sorted(by: { $0.value > $1.value }) { print("\(n)× \(c)") }
+    if changes.isEmpty { print("no changes") }
 case "livetest":
     // msctl livetest <mic.wav> [system.wav] [call|inPerson|hybrid]  (feeds audio at 4x speed)
     let rest = Array(args.dropFirst())

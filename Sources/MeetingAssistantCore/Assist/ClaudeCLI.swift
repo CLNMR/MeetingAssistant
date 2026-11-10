@@ -21,12 +21,15 @@ public enum ClaudeCLI {
         case notLoggedIn
         case usageLimit(String)
         case failed(String)
+        /// A one-shot call that got no answer within its time limit (seconds).
+        case timedOut(Int)
         public var errorDescription: String? {
             switch self {
             case .notInstalled: return "Claude Code is not installed. Install it from claude.com/code, then run `claude` once in Terminal to log in."
             case .notLoggedIn: return "Claude Code is not logged in. Run `claude` in Terminal and log in with your Claude account."
             case .usageLimit(let m): return "Claude usage limit reached. \(m)"
             case .failed(let m): return "Claude failed: \(m)"
+            case .timedOut(let s): return "Claude did not answer within \(s) s."
             }
         }
     }
@@ -82,7 +85,7 @@ public enum ClaudeCLI {
         return env
     }
 
-    struct ProcessOutput { var stdout: Data; var stderr: Data; var status: Int32 }
+    struct ProcessOutput { var stdout: Data; var stderr: Data; var status: Int32; var timedOut = false }
 
     static func run(_ binary: URL, _ args: [String], stdin: Data?, timeout: TimeInterval) async throws -> ProcessOutput {
         try await withCheckedThrowingContinuation { cont in
@@ -96,14 +99,15 @@ public enum ClaudeCLI {
             let outBuf = DataBox(), errBuf = DataBox()
             out.fileHandleForReading.readabilityHandler = { h in outBuf.append(h.availableData) }
             err.fileHandleForReading.readabilityHandler = { h in errBuf.append(h.availableData) }
-            let finished = DataBox()
+            let finished = DataBox(), killed = DataBox()
             p.terminationHandler = { proc in
                 out.fileHandleForReading.readabilityHandler = nil
                 err.fileHandleForReading.readabilityHandler = nil
                 outBuf.append(out.fileHandleForReading.readDataToEndOfFile())
                 errBuf.append(err.fileHandleForReading.readDataToEndOfFile())
                 if finished.markOnce() {
-                    cont.resume(returning: ProcessOutput(stdout: outBuf.data, stderr: errBuf.data, status: proc.terminationStatus))
+                    cont.resume(returning: ProcessOutput(stdout: outBuf.data, stderr: errBuf.data, status: proc.terminationStatus,
+                                                         timedOut: killed.isMarked))
                 }
             }
             do { try p.run() } catch {
@@ -113,7 +117,7 @@ public enum ClaudeCLI {
             if let stdin { inp.fileHandleForWriting.write(stdin) }
             try? inp.fileHandleForWriting.close()
             DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
-                if p.isRunning { p.terminate() }
+                if p.isRunning { _ = killed.markOnce(); p.terminate() }
             }
         }
     }
@@ -132,6 +136,7 @@ public enum ClaudeCLI {
         if let schema { args += ["--json-schema", schema.compactJSON] }
         let out = try await run(binary, args, stdin: Data(prompt.utf8), timeout: timeout)
         guard let v = try? JSONValue.parse(out.stdout) else {
+            if out.timedOut { throw CLIError.timedOut(Int(timeout)) }
             let err = String(data: out.stderr, encoding: .utf8) ?? ""
             if err.lowercased().contains("login") || err.lowercased().contains("auth") { throw CLIError.notLoggedIn }
             throw CLIError.failed(err.isEmpty ? "no answer (exit \(out.status))" : String(err.prefix(400)))
@@ -159,6 +164,7 @@ final class DataBox: @unchecked Sendable {
     var data: Data { lock.lock(); defer { lock.unlock() }; return d }
     func take() -> Data { lock.lock(); defer { lock.unlock() }; let x = d; d = Data(); return x }
     func markOnce() -> Bool { lock.lock(); defer { lock.unlock() }; if marked { return false }; marked = true; return true }
+    var isMarked: Bool { lock.lock(); defer { lock.unlock() }; return marked }
 }
 
 /// A long-running `claude -p --input-format stream-json` process: one conversation, fed one user

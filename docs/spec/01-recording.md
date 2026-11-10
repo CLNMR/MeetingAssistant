@@ -95,10 +95,12 @@ Level meter value: RMS of each buffer, peak-hold `level = max(rms, previous × 0
 | `mic.caf` | CAF container, 16 000 Hz, 1 channel, 16-bit signed little-endian integer PCM |
 | `system.caf` | same; only in Call/Hybrid |
 
+**Track file format across platforms (decided):** each platform writes its native container — the Mac writes `mic.caf`/`system.caf`, Windows writes `mic.wav`/`system.wav` (RIFF WAVE, same PCM spec). Every reader accepts both: for each track it uses `<track>.caf` if it exists, else `<track>.wav`. So a session folder written on either platform can be opened, played, transcribed, trimmed and split on the other. Trim keeps the file's container (a `.wav` stays a `.wav`); new tracks (recording, import, part 2 of a split) are written in the platform's own container.
+
 A listen-only writer (no file) exists for the floating live transcript; it only forwards samples.
 
-**Mac implementation:** `TrackWriter` (`Capture/TrackWriter.swift`), `Resampler16k` (`Capture/Resampler.swift`, `AVAudioConverter`, downmix on, quality high), `SessionRecorder` (`Capture/SessionRecorder.swift`). Host time = `mach_absolute_time`.
-**Windows notes:** use the QPC timestamp returned by `IAudioCaptureClient::GetBuffer` (`pu64QPCPosition`, 100 ns units) and `QueryPerformanceCounter` for the session start. Resample with Media Foundation's resampler DSP or a library resampler (NAudio `WdlResamplingSampleProvider`, libsamplerate). For file format: writing **WAV** (`mic.wav`/`system.wav`, same PCM spec) is simpler on Windows; if sessions must be exchangeable with the Mac, either write CAF (simple chunked format: `caff` header, `desc` chunk with `lpcm`, `data` chunk) or teach both readers to accept either extension. Decide once and document it in this spec.
+**Mac implementation:** `AppPaths.track(id, track)` resolves the file to read (CAF, else WAV); `AppPaths.newTrack(id, track)` is the CAF path writers use. `TrackWriter` (`Capture/TrackWriter.swift`), `Resampler16k` (`Capture/Resampler.swift`, `AVAudioConverter`, downmix on, quality high), `SessionRecorder` (`Capture/SessionRecorder.swift`). Host time = `mach_absolute_time`.
+**Windows notes:** use the QPC timestamp returned by `IAudioCaptureClient::GetBuffer` (`pu64QPCPosition`, 100 ns units) and `QueryPerformanceCounter` for the session start. Resample with Media Foundation's resampler DSP or a library resampler (NAudio `WdlResamplingSampleProvider`, libsamplerate). File format: write **WAV** (`mic.wav`/`system.wav`, 16 kHz mono 16-bit PCM) and read both `.caf` and `.wav` with the same preference (CAF first), see "Track file format across platforms" above. A CAF reader needs only the `caff` header, the `desc` chunk (`lpcm`) and the `data` chunk.
 
 ---
 
@@ -107,7 +109,7 @@ A listen-only writer (no file) exists for the floating live transcript; it only 
 **Start** (button "Start Recording", ⌘↩ on the recorder screen, ⇧⌘R anywhere, menu-bar "Record <Mode>", ⏺ in the floating window):
 
 1. Request microphone permission. If denied: error "MeetingAssistant has no access to the microphone. Allow it in System Settings › Privacy & Security › Microphone, then try again." The error alert then has an extra button "Open System Settings" (shown whenever the message contains "System Settings").
-2. Create the session: id = local start time formatted `yyyy-MM-dd_HH-mm-ss`; title = trimmed title field, or `Meeting <medium date, short time>` (locale formatting, e.g. "Meeting 10 Nov 2026 at 14:03"); tracks per mode; `expectedSpeakers` = participants picker (nil when "Detect automatically"); `language` = preference unless "Automatic" (then omitted); status `recording`. The session folder is created. (There is no collision check for recordings started within the same second.)
+2. Create the session: id = local start time formatted `yyyy-MM-dd_HH-mm-ss`; title = trimmed title field, or `Meeting <medium date, short time>` (locale formatting, e.g. "Meeting 10 Nov 2026 at 14:03"); tracks per mode; `expectedSpeakers` = participants picker (nil when "Detect automatically"); `language` = preference unless "Automatic" (then omitted); status `recording`. The session folder is created; if a folder with that name already exists (two recordings started in the same second, e.g. app and `msctl`), the id gets `_2`, `_3`, … — creating the folder is what reserves the id.
 3. If floating live listening is running, it pauses its own capture (the recording takes over the mic).
 4. If live transcription is wanted (preference *Show live transcript while recording* **or** the floating window is listening **or** Assist forces it), a live transcriber is created for the session's tracks and fed by the track writers.
 5. `session.json` is written, the mic starts, then the system tap (if the tap fails, the mic is stopped and the error "Could not start recording: …" is shown).
@@ -122,7 +124,7 @@ A listen-only writer (no file) exists for the floating live transcript; it only 
 
 **Stop Earlier… sheet** ("Stop and Remove the End"): "Forgot to stop? Choose where the meeting ended. The recording stops now and everything after that point is deleted." A time chooser (slider + editable `h:mm:ss`/`mm:ss`/seconds field) from 0 to the elapsed time; quick buttons "Last speech (<t>)" (end of the last live line + 2 s, capped at elapsed; also the initial value, else elapsed) and "−5 min", "−15 min", "−30 min", "−60 min" (shown only when the recording is longer). Caption "Keeps <t> of <total>." Button "Stop and Keep <t>" (disabled below 1 s), Cancel.
 
-**Crash recovery at launch:** sessions found with status `recording` are set to `recorded` (their `durationSec` stays 0 because the final write never happened); sessions with `queued` or `transcribing` are queued again.
+**Crash recovery at launch:** sessions found with status `recording` are set to `recorded`; because the final write never happened, a `durationSec` of 0 is replaced by the length of the longest track file on disk (frames ÷ sample rate; if the header is unreadable, estimated from the file size as 16 kHz 16-bit mono), so the recording can be played, trimmed and split. Sessions with `queued` or `transcribing` are queued again (with the engine preference; a one-off engine from "Transcribe Again" is not remembered).
 
 **Mac implementation:** `AppState.startRecording/stopRecording` (`Sources/MeetingAssistant/AppState.swift`), `StopEarlierSheet` and `TimeChooser` (`EditSheets.swift`).
 
@@ -174,9 +176,9 @@ For each utterance: words are tagged with speakers; a word with unknown speaker 
 
 - Shown only when the *Show live transcript* preference is on. Header "Live transcript", note "Preview · speaker labels follow a few seconds behind".
 - Row: `clock(start)` · label (80 pt column, speaker colour) · text (normal colour if final, muted if partial). Auto-scrolls to the newest line.
-- Labels: `me` → "Me" (hard-coded here; the floating window uses the user's name); other ids get "Speaker n" in order of first appearance, except in Call mode `system-*` ids get "Remote n" (the counter `n` is shared between both kinds, so "Speaker 1", "Remote 2" is possible); nil → "…".
+- Labels (same rules as the floating window): `me` → the user's name (preference, trimmed; "Me" if empty); other ids in order of first appearance get "Speaker n", except in Call mode `system-*` ids get "Remote n". Speaker and Remote have **separate counters** ("Speaker 1", "Remote 1", "Remote 2", "Speaker 2"); nil → "…".
 
-**Mac implementation:** `LiveTranscriber` actor (`Pipeline/LiveTranscriber.swift`), models via `ModelStore` (`Pipeline/Engines.swift`: `vadProbability`, `liveDiarizer()` = `Nemotron3Diarizer(config: .fast32)`), view `LiveTranscriptView` in `RecorderView.swift`. Libraries: FluidAudio (Silero VAD, Parakeet, Nemotron 3 on Core ML / Neural Engine).
+**Mac implementation:** `LiveTranscriber` actor (`Pipeline/LiveTranscriber.swift`), labels via `LiveSpeakerLabels` (same file, used by both views), models via `ModelStore` (`Pipeline/Engines.swift`: `vadProbability`, `liveDiarizer()` = `Nemotron3Diarizer(config: .fast32)`), view `LiveTranscriptView` in `RecorderView.swift`. Libraries: FluidAudio (Silero VAD, Parakeet, Nemotron 3 on Core ML / Neural Engine).
 **Windows notes:** Silero VAD ONNX (sherpa-onnx or onnxruntime directly; keep the 4096-sample block and threshold). Parakeet TDT 0.6B v3 via sherpa-onnx (int8) for both live and final. Nemotron 3 / Sortformer-style streaming diarization has no ready sherpa-onnx package: options are an ONNX export of NVIDIA's streaming Sortformer, or a fallback of sherpa-onnx speaker embeddings (CAM++) on each utterance with online clustering. Whatever is used must produce "slot per word or nil while lagging" so the rules above stay the same.
 
 ---
@@ -192,7 +194,7 @@ A small always-on-top window that transcribes the mic (and call audio, depending
 - **Bluetooth rule:** if the chosen (or default) input is a Bluetooth device, listening uses another mic instead: first built-in, then USB; if none exists, the Bluetooth one. (Recordings themselves use the chosen device.)
 - **Segment rotation** (keeps memory flat when running all day): every 0.25 s a tick checks the current segment; when it is older than **10 min** and either the last line ended more than 3 s ago or the segment is older than 12 min, a fresh live transcriber is started on the same capture (times restart at 0); the old one is drained and released. Finished segments are dropped from the oldest while the total exceeds **4000 lines**.
 - **During a recording** the window's own capture is paused and the recording's live transcript is shown in the same list, so it reads as one continuous transcript; recorded paragraphs carry a small red ⏺ marker. The pause/resume button is disabled while recording.
-- **Paragraphs:** consecutive lines of the same speaker in the same segment are joined if they start within 120 s of the paragraph's start. Final text first, then pending (partial) text in muted colour. Speaker names: `me` → user's name (preference, default "Me"); others "Speaker n" / "Remote n" (Call, system track) numbered per segment; nil → "…". Each paragraph shows speaker (in colour), `HH:mm`. Only the last **150** paragraphs are drawn. UI updates are coalesced (0.4 s).
+- **Paragraphs:** consecutive lines of the same speaker in the same segment are joined if they start within 120 s of the paragraph's start. Final text first, then pending (partial) text in muted colour. Speaker names as in the recorder's live view (`me` → user's name or "Me"; "Speaker n" and "Remote n" (Call, system track) with separate counters), numbered per segment; nil → "…". Each paragraph shows speaker (in colour), `HH:mm`. Only the last **150** paragraphs are drawn. UI updates are coalesced (0.4 s).
 - **Controls (top bar):** ⏺ start recording (or ⏹ + elapsed time while recording), ⏸/👂 pause/resume listening, two level dots (mic; speaker if the mode records system audio) that light when the level > 0.0056 (≈ −45 dB). "⋯" menu: Copy Transcript (all paragraphs as `[HH:mm:ss] Speaker: final pending`, one per line), Clear (hides everything before now), Larger Text / Smaller Text (font 9–28 pt, default 13, remembered), Open MeetingAssistant.
 - Scrolling follows new lines until the user scrolls up; a "jump to latest" button appears; scrolling back to the bottom resumes following.
 - Empty states: "Listening… nothing is saved unless you press record." / "Paused."
@@ -222,15 +224,15 @@ Runs per session from the files on disk. Input: `session.json` + track files. Ou
 #### Steps
 
 1. If engine is Qwen3: load it first (progress 0.01–0.05 "Loading models").
-2. Tracks = the session's tracks whose file exists; none → error "The recording contains no audio." Each track gets an equal share of progress 0.05…0.95. Messages use "microphone" / "call audio": "Reading …", "Detecting speech in …", "Transcribing … (i/n)", "Identifying speakers in …", "Finished …", finally "Done".
+2. Tracks = the session's tracks whose file exists; none → error "The recording contains no audio." Each track gets an equal share of progress 0.05…0.95. Messages use "microphone" / "call audio": "Reading …", "Detecting speech in …", "Transcribing … (i/n)", "Identifying speakers in …", "Finished …", finally "Done". When the Parakeet language rescue (see ASR engines) redoes a chunk with Qwen3, the message becomes "Checking the language with Qwen3… · <track> (i/n)", or, when Qwen3 is not loaded yet, "Checking the language with Qwen3 (loading the model, about 4 GB)… · <track> (i/n)", so a long pause while the ~4 GB model loads is explained.
 3. Per track:
    1. Load and convert to 16 kHz mono float. If the track's overall RMS ≤ 1e-5 it is treated as silent and skipped.
    2. **VAD regions** (Silero, threshold 0.5): min speech 0.2 s, min silence 0.5 s, max speech 60 s, speech padding 0.1 s; audio processed in 300 s pieces (offsets added).
    3. **Chunking** (see table) → transcribe each chunk with word timestamps (absolute = chunk start + word time). Chunks ≤ 1600 samples (0.1 s) give no words. Cancellation is checked before each chunk.
    4. **Diarization** if the track is diarized in this mode and has words: offline Nemotron 3 over the whole track with a speech mask (10 ms frames, true within each VAD region ±1 s); segment threshold 0.5, minimum segment 0.25 s. Segment speaker ids become `<track>-<index>` (e.g. `mic-0`, `system-3`).
    5. **Speaker embeddings** per diarized speaker: take that speaker's segments longest first, skip any segment overlapping other speakers' segments by more than 20 % of its own length, concatenate until more than 45 s; if at least 1 s was collected, compute a CAM++ embedding (192-d, L2-normalised). Weight = total duration of all that speaker's segments.
-   6. Track without diarization → all words get speaker `<track>-0`.
-4. **Cluster merging** across all tracks together (see below). Target = `expectedSpeakers`, except Hybrid (no target).
+   6. Track without diarization, or a diarized track for which the diarizer returned no segments → all words get speaker `<track>-0`.
+4. **Cluster merging** within each track (see below). Target = `expectedSpeakers` (counts the clusters of all tracks), except Hybrid (no target).
 5. **Word → speaker assignment** per track (see below), mapped to the merged ids.
 6. **Echo removal** (Call and Hybrid): drop mic words that echo the system track.
 7. Final centroids = normalised mean of the centroids mapped to each merged id.
@@ -254,7 +256,7 @@ Regions sorted by start, padded; a region joins the previous chunk if `gap ≤ 1
 
 | Engine id | UI title | Notes |
 |---|---|---|
-| `parakeet-ultra` | "Parakeet Ultra — fast, 25 European languages (recommended)" | NVIDIA Parakeet TDT 0.6B. Cannot be told the language. Word timings from token timings; if none but text exists, words are spread evenly over the chunk. **Language rescue:** if the user chose German or English and a language detector says the chunk's text is another language with probability ≥ 0.5 (text has ≥ 2 letters), the chunk is redone with Qwen3 forced to that language. |
+| `parakeet-ultra` | "Parakeet Ultra — fast, 25 European languages (recommended)" | NVIDIA Parakeet TDT 0.6B. Cannot be told the language. Word timings from token timings; if none but text exists, words are spread evenly over the chunk. **Language rescue:** if the user chose German or English and a language detector says the chunk's text is another language with probability ≥ 0.5 (text has ≥ 2 letters), the chunk is redone with Qwen3 forced to that language; this is reported through the progress message (see Steps). |
 | `qwen3-1.7b` | "Qwen3-ASR 1.7B — slower, 30 languages incl. Asian" | Qwen3-ASR 1.7B, max 1024 tokens, language name passed when not auto, no-repeat n-gram size 4 for long input; then the Qwen3 forced aligner (language German if german, else English) gives word times. |
 
 **Aligner attach rule** (keeps ASR punctuation/casing): split the ASR text on whitespace; for each token, normalise (lowercase, letters/digits only) and search the next 4 aligner words for an equal word or a prefix match either way; consume following aligner pieces while their concatenation is still a prefix of the token (end time = last piece). Tokens without a match get interpolated times between the previous end and the next known start (`step = gap / (missingRun+1)`, min 0.01 s). Finally start times are made monotonic.
@@ -263,11 +265,11 @@ Language list: `auto` "Automatic", `german` "German", `english` "English". Setti
 
 #### Cluster merging
 
-Greedy: while more than one cluster remains, find the most similar pair (cosine of centroids; ties by sorted id order). Merge if the cluster count is above the target, or the similarity ≥ 0.80; otherwise stop. The cluster with more speech seconds survives; its centroid becomes the speech-weighted average (renormalised) and weights add up. Clusters without an embedding (< 1 s clean speech) never merge. Note: merging is across tracks, so a mic cluster and a system cluster can merge (target counts all people on both tracks).
+Greedy: while more than one cluster remains, find the most similar pair **of the same track** (`mic-*` with `mic-*`, `system-*` with `system-*`; the track is the id part before the first `-`; cosine of centroids; ties by sorted id order). Merge if the total cluster count (all tracks) is above the target, or the similarity ≥ 0.80; otherwise stop — also when no same-track pair is left, even if the count is still above the target. A voice at the microphone and a voice on the call audio are never merged: they are different people (echo is handled separately). The cluster with more speech seconds survives; its centroid becomes the speech-weighted average (renormalised) and weights add up. Clusters without an embedding (< 1 s clean speech) never merge.
 
 #### Word → speaker assignment
 
-For each word (span widened to at least 20 ms): the diarization segment with the largest overlap (segments within 10 ms tolerance considered). With no positive overlap: the nearest segment if its distance from the word's midpoint is < 1.5 s; else the previous word's speaker; else the first segment's speaker. Then **singleton smoothing**: a single word whose two neighbours share another speaker is moved to that speaker if the gap between the neighbours is < 1.0 s. (If a diarized track produced zero segments, its words get speaker `unknown`.)
+For each word (span widened to at least 20 ms): the diarization segment with the largest overlap (segments within 10 ms tolerance considered). With no positive overlap: the nearest segment if its distance from the word's midpoint is < 1.5 s; else the previous word's speaker; else the first segment's speaker. Then **singleton smoothing**: a single word whose two neighbours share another speaker is moved to that speaker if the gap between the neighbours is < 1.0 s. (A track without segments uses its fixed speaker `<track>-0`.)
 
 #### Echo removal
 
@@ -311,10 +313,10 @@ The user's vocabulary (`vocabulary.json`, see Vocabulary section) is applied to 
 - **Cancel** (detail view button while processing) cancels the running job and empties the queue: the running session and all queued ones go back to `recorded`.
 - When the queue is empty, the large final-pass models (Qwen3, aligner, offline Nemotron) are unloaded to free memory (Qwen3 alone ≈ 4 GB).
 - Enqueued by: stop recording (auto-transcribe or Assist), Import, "Transcribe Now" (empty detail view), "Transcribe Again" (list context menu: current preferences; detail toolbar menu: choose engine × language).
-- **Transcribe Again with engine/language** stores the language in the session (`auto` → removed) and **sets the global engine preference** to the chosen engine, then enqueues.
+- **Transcribe Again with engine/language** stores the language in the session (`auto` → removed) and uses the chosen engine **for that run only**; the engine preference is not changed. The menu's checkmark marks the session's language under the engine of the current transcript (or the preference if there is none).
 - Editing (trim/split) refuses sessions in `recording`, `queued` or `transcribing` ("The recording is being recorded or transcribed right now.").
 
-**Mac implementation:** `AppState.enqueue/drain/cancelProcessing/retranscribe`.
+**Mac implementation:** `AppState.enqueue/drain/cancelProcessing/retranscribe` (one-off engines in `engineOverride`, keyed by session id, cleared on use and on Cancel).
 
 ---
 
@@ -325,23 +327,23 @@ The user's vocabulary (`vocabulary.json`, see Vocabulary section) is applied to 
 - "Models ready" = the four core model folders exist in the model cache (`parakeet-ultra`, `silero-vad`, `campplus`, `nemotron-3-diarization`), or after the first successful transcription/download in this run. Models come from Hugging Face; Qwen3 is otherwise downloaded on first use.
 - Parakeet is pre-loaded in the background at launch when dictation is on and models are ready.
 
-**Mac implementation:** `ModelStore.prepareAll`, `coreModelsCached()` (checks `~/Library/Application Support/FluidAudio/Models/…`, independent of `MEETINGASSISTANT_HOME`); `ModelSetupBanner` in `RecorderView.swift`. `AppPaths.models` is created but not used by the current libraries.
+**Mac implementation:** `ModelStore.prepareAll`, `coreModelsCached()` (checks `~/Library/Application Support/FluidAudio/Models/…`, independent of `MEETINGASSISTANT_HOME`); `ModelSetupBanner` in `RecorderView.swift`. The app does not create a `Models/` folder in its data directory (the libraries keep their own caches); an existing one from older versions is left alone.
 **Windows notes:** store models under `<AppData>\Models\<name>` and use the same four-folder readiness check.
 
 ---
 
 ### Speakers: voiceprint, library, renaming
 
-**Voiceprint ("me")** — Settings › Voices › "Your voice": "For in-person meetings MeetingAssistant recognises you by your voice. Record about 20 seconds once." The user reads a provided German+English text; "Finish" is enabled after 15 s of recording ("Keep reading… (n s)"). Enrollment: VAD speech regions concatenated; at least **8 s** of speech required (error text says "Please speak for at least 15 seconds."); embeddings of consecutive 6 s windows (a window is used if at least 3 s remain) averaged and normalised. Saved as `me-voiceprint.json`. Shows "<n> s recorded <date>" and Delete.
+**Voiceprint ("me")** — Settings › Voices › "Your voice": "MeetingAssistant recognises you by your voice. Record a voice sample once: read the text aloud for at least 15 seconds (8 seconds of speech are needed)." The user reads a provided German+English text; "Finish" is enabled after **15 s** of recording ("Keep reading… (n s)", n rounded up), which leaves room for pauses. Enrollment: VAD speech regions concatenated; at least **8 s** of speech required, else the error "Only <n> s of speech detected; at least 8 s are needed. Please record again and keep reading without long pauses."; embeddings of consecutive 6 s windows (a window is used if at least 3 s remain) averaged and normalised. Saved as `me-voiceprint.json`. Shows "<n> s recorded <date>" and Delete.
 
-**Speaker library ("Remembered voices")** — learned from renames: when the user renames a speaker that has an embedding and is not "me", the name's entry is created or refined (case-insensitive name match; running average `(old×count + new)/(count+1)`, renormalised; count+1). Listed with "from N meeting(s)" and "Forget" (removes entries with exactly that name, case-sensitive).
+**Speaker library ("Remembered voices")** — learned from renames: when the user renames a speaker that has an embedding and is not "me", the name's entry is created or refined (case-insensitive name match; running average `(old×count + new)/(count+1)`, renormalised; count+1). Listed with "from N meeting(s)" and "Forget" (removes the entries with that name, matched like learning: ignoring case and surrounding spaces).
 
 **In the transcript view** each speaker chip (colour dot, label, talk share = speaker's summed turn durations / all turn durations, rounded %) opens a menu:
 - **Rename…** — alert "Rename speaker" with name field (pre-filled with the label unless it starts with "Speaker "), message "MeetingAssistant remembers this voice and uses the name automatically in future meetings." Empty names are ignored. Also teaches the library (see above).
-- **This is me** (not on the current me) — this speaker gets `isMe = true` and label myName; a previous "me" loses `isMe` and is relabelled "Speaker <its index+1>". (Does not change the voiceprint or library.)
+- **This is me** (not on the current me) — this speaker gets `isMe = true` and label myName ("Me" if empty); a previous "me" loses `isMe` and gets the lowest unused "Speaker N" (N = 1, 2, … not yet used as a label in this transcript, compared ignoring case). (Does not change the voiceprint or library.)
 - **Merge into ▸ <other speaker>** — all turns move to the other speaker; if both have embeddings the target's becomes their normalised mean; the source speaker is removed; then **normalize**.
 
-Per line (context menu): **Change speaker to ▸** <each speaker> / "New speaker" (creates id `manual-<6 hex chars>`, label "Speaker <count+1>", no embedding) and **Copy** (`<label>: <text>`).
+Per line (context menu): **Change speaker to ▸** <each speaker> / "New speaker" (creates id `manual-<6 hex chars>`, label = the lowest unused "Speaker N" as above, no embedding) and **Copy** (`<label>: <text>`).
 
 **Normalize** (after reassign/merge/slice): sort turns by start; join a turn into the previous one if same speaker and gap < 1.5 s (text joined with a space, words appended, end = max); renumber ids; drop speakers no longer used.
 
@@ -349,7 +351,7 @@ Every edit is saved to `transcript.json` immediately.
 
 **Speaker colours:** "me" = accent colour; others = 10-colour palette (orange, purple, green, pink, teal, brown, indigo, mint, red, cyan) indexed by 64-bit FNV-1a hash of the speaker id's UTF-8 bytes mod 10 (stable across runs and platforms).
 
-**Mac implementation:** `VoiceprintStore`, `SpeakerLibrary` (`Pipeline/SpeakerID.swift`), `Transcript.reassign/merge/normalize` (`Model/Models.swift`), `SessionDetailView` speaker bar, `VoiceSettings` + `EnrollmentRecorder` in `SettingsView.swift`, `speakerColor` in `ContentView.swift`.
+**Mac implementation:** `VoiceprintStore`, `SpeakerLibrary` (`Pipeline/SpeakerID.swift`), `Transcript.reassign/merge/normalize/markMe/unusedSpeakerLabel` (`Model/Models.swift`), `SessionDetailView` speaker bar, `VoiceSettings` + `EnrollmentRecorder` in `SettingsView.swift`, `speakerColor` in `ContentView.swift`.
 
 ---
 
@@ -379,15 +381,15 @@ UI:
 
 Both rewrite the audio sample-exactly (frame positions = seconds × file rate) and cut an existing transcript the same way, so names and manual fixes survive without re-transcribing.
 
-**Trim** (keep `start…end`): clamp to 0…duration; must keep ≥ 1 s ("The chosen part is empty."). Each track is copied to a temp file `.trim-<track>.caf` in the session folder and swapped in. Transcript is sliced (below). `startedAt += start`, `durationSec = end − start`. Sheet "Trim Recording": "Keep only the part between start and end. The rest of the audio is deleted; the transcript is cut to match." Start/End time choosers with "Playhead" buttons, "End after last speech (<t>)" (last turn end + 2 s, capped), "Keeps <t> of <total>." "Trim" is disabled if < 1 s would remain or nothing would change (start < 0.5 s and end > duration − 0.5 s).
+**Trim** (keep `start…end`): clamp to 0…duration; must keep ≥ 1 s ("The chosen part is empty."). Each track is copied to a temp file `.trim-<track>.<ext>` (same container as the track) in the session folder and swapped in. Transcript is sliced (below). If `assist.json` exists, its lines are sliced too (lines starting in `[start, end)`, shifted by −start; when the end stays at the full length, later lines are kept). `startedAt += start`, `durationSec = end − start`. Sheet "Trim Recording": "Keep only the part between start and end. The rest of the audio is deleted; the transcript is cut to match." Start/End time choosers with "Playhead" buttons, "End after last speech (<t>)" (last turn end + 2 s, capped), "Keeps <t> of <total>." "Trim" is disabled if < 1 s would remain or nothing would change (start < 0.5 s and end > duration − 0.5 s).
 
-**Split at time t** (needs t ≥ 1 s and duration − t ≥ 1 s): new session id = part-2 start time (`startedAt + t`) formatted `yyyy-MM-dd_HH-mm-ss`, with `_2`, `_3`, … if taken. Tracks `t…end` copied into it; transcript sliced; `session.json` copied with new id, title "<title> (Part 2)", new `startedAt`, `durationSec = duration − t`, same status except `done` without transcript → `recorded`. Then the original is trimmed to `0…t`. On any error the new folder is deleted. The new session is selected. (Other files such as `assist.json` are not copied.) Sheet "Split Recording": optional pause text, "Everything after the split point becomes a separate recording, "<title> (Part 2)". The transcript is split too.", time chooser + Playhead (initial: pause split point, else playhead if > 1 s, else half), "Part 1: … · Part 2: …".
+**Split at time t** (needs t ≥ 1 s and duration − t ≥ 1 s): new session id = part-2 start time (`startedAt + t`) formatted `yyyy-MM-dd_HH-mm-ss`, with `_2`, `_3`, … if taken. Tracks `t…end` copied into it; transcript sliced; `session.json` copied with new id, title "<title> (Part 2)", new `startedAt`, `durationSec = duration − t`, same status except `done` without transcript → `recorded`. Then the original is trimmed to `0…t`. If the session has `assist.json`, part 2 gets its own `assist.json`: the same context and live panels, the lines starting at or after `t` (times shifted by −t), and nothing of the first meeting's write-up — no linked recap meeting, upload times, CRM time, created contacts, filled tables or recap draft (it is a new meeting); "speakers carried" is kept. Part 1 keeps only its lines before `t` (through the trim). On any error the new folder is deleted. The new session is selected. Sheet "Split Recording": optional pause text, "Everything after the split point becomes a separate recording, "<title> (Part 2)". The transcript is split too.", time chooser + Playhead (initial: pause split point, else playhead if > 1 s, else half), "Part 1: … · Part 2: …".
 
 **Split at a pause** (when the chosen time is within 0.5 s of the pause's split point): split at `splitPoint`; if "Remove the pause (<len>) from part 1" is on (default) and `splitPoint − keepUntil ≥ 1 s`, part 1 is additionally trimmed to `0…keepUntil`.
 
 **Transcript slice (start, end):** keep words whose midpoint is in `[start, end)`, shift by −start (start clamped ≥ 0, end clamped to `end − start`); turn start/end/text rebuilt from its kept words; turns without word timings are kept if their midpoint is inside; speakers filtered to those used; normalize.
 
-**Mac implementation:** `Pipeline/SessionEdit.swift`, `Pipeline/Pauses.swift` (`split(_:at:removePause:)`), `TrimSheet`, `SplitSheet` in `EditSheets.swift`.
+**Mac implementation:** `Pipeline/SessionEdit.swift` (`slice`, `secondPart(of:from:end:)` for `assist.json`), `Pipeline/Pauses.swift` (`split(_:at:removePause:)`), `TrimSheet`, `SplitSheet` in `EditSheets.swift`.
 
 ---
 
@@ -438,18 +440,17 @@ Line context menu "Copy" copies `<label>: <text>`.
 
 - Override: environment variable **`MEETINGASSISTANT_HOME`** (legacy name `MEETINGSCRIBE_HOME` also honoured) = absolute folder used as root. Used to keep test data separate.
 - Migration (Mac): the app was called MeetingScribe. If `…/MeetingScribe/` exists and `…/MeetingAssistant/` does not, it is moved once; if the move fails the old folder keeps being used. If both exist, the new one is used unless it is empty.
-- `Sessions/` and `Models/` are created at start.
+- `Sessions/` is created at start (no `Models/` folder; one left by older versions is not touched).
 
 ```
 <root>/
   Sessions/<sessionId>/
     session.json          SessionInfo
-    mic.caf               16 kHz mono 16-bit PCM
-    system.caf            (Call/Hybrid only)
+    mic.caf               16 kHz mono 16-bit PCM (Windows: mic.wav; readers accept both, .caf first)
+    system.caf            (Call/Hybrid only; Windows: system.wav)
     transcript.json       Transcript (after transcription)
     assist.json           (Assist recordings only; see Assist section)
-    .trim-<track>.caf     (temporary during trim)
-  Models/                 (created, currently unused on Mac)
+    .trim-<track>.<ext>   (temporary during trim)
   me-voiceprint.json      Voiceprint
   speaker-library.json    SpeakerLibrary
   vocabulary.json         Vocabulary (see Vocabulary section)
@@ -470,10 +471,10 @@ The session list is built by reading every `Sessions/*/session.json` (unreadable
 
 | Field | Type | Notes |
 |---|---|---|
-| `id` | string | Folder name. `yyyy-MM-dd_HH-mm-ss` (local time), `import_…`, or with `_n` suffix after split/import collisions |
+| `id` | string | Folder name. `yyyy-MM-dd_HH-mm-ss` (local time), `import_…`, or with `_n` suffix when the name is taken (recording, split, import) |
 | `title` | string | User-editable (detail header, Enter to save) |
 | `startedAt` | date | Start of the audio (shifted by trims/splits) |
-| `durationSec` | number | Seconds; 0 while recording / after a crash |
+| `durationSec` | number | Seconds; 0 while recording (set from the audio files when a crashed recording is recovered) |
 | `mode` | `"call"` \| `"inPerson"` \| `"hybrid"` | |
 | `tracks` | array of `"mic"` \| `"system"` | Tracks the session should have |
 | `expectedSpeakers` | int, optional | Participants picker 2–10; omitted = automatic |
@@ -495,7 +496,7 @@ Turn:
 | Field | Type | Notes |
 |---|---|---|
 | `id` | int | Index |
-| `speaker` | string | Speaker id: `mic-<n>`, `system-<n>`, `manual-<hex6>`, `unknown`, or legacy `me` |
+| `speaker` | string | Speaker id: `mic-<n>`, `system-<n>`, `manual-<hex6>`, or legacy `me` / `unknown` (older transcripts) |
 | `start`, `end` | number | Seconds |
 | `text` | string | Words joined with single spaces (ASR punctuation kept) |
 | `track` | `"mic"` \| `"system"` | Track of the first word |
@@ -546,9 +547,9 @@ Other UI state: `appMode` (`scribe`/`assist`), `dismissedSplitHints`, `floatingP
 
 ### Scribe window, menus and shortcuts
 
-**Layout:** left rail (logo, Scribe ⌘1, Assist ⌘2, floating transcript, settings, user initials from myName, "ME" if empty; a red dot on the Scribe icon while recording and Assist is shown). Scribe = recordings panel (290 pt) + main area (recorder or session detail).
+**Layout:** left rail (logo — tooltip "Open the meetings in Aya" when a meetings list is set up, else "Open Aya", see the Assist UI section —, Scribe ⌘1, Assist ⌘2, floating transcript, settings, user initials from myName, "ME" if empty; a red dot on the Scribe icon while recording and Assist is shown). Scribe = recordings panel (290 pt) + main area (recorder or session detail).
 
-**Recordings panel:** title "Recordings", Import button (⌘I); "New Recording" row (shows "⇧⌘R", or "Recording…" + elapsed · mode while recording; selects the recorder); search field (filters titles, case-insensitive); list (excluding the session being recorded), each row: title, status badge, mode icon, start "d MMM, HH:mm", `· clock(duration)`, progress bar while processing. Up/Down arrows move the selection. Row context menu: "Transcribe Again", "Show in Finder", "Delete" (deletes the folder immediately, no confirmation). Empty: "No recordings yet." / "Nothing matches.".
+**Recordings panel:** title "Recordings", Import button (⌘I); "New Recording" row (shows "⇧⌘R", or "Recording…" + elapsed · mode while recording; selects the recorder); search field (filters titles, case-insensitive); list (excluding the session being recorded), each row: title, status badge, mode icon, start "d MMM, HH:mm", `· clock(duration)`, progress bar while processing. Up/Down arrows move the selection. Row context menu: "Transcribe Again", "Show in Finder", "Delete…" (disabled while the session is recording, queued or transcribing). Delete asks first, in the same style as Assist: title "Delete “<title>”?", message "The recording, the transcript and the notes on this Mac are deleted." plus, for sessions with `assist.json`, " What was saved in Aya stays there."; a destructive "Delete" button and Cancel. Confirming deletes the session folder. Empty: "No recordings yet." / "Nothing matches.".
 
 **Recorder screen (not recording):** eyebrow "Scribe", "New recording", "Everything is recorded and transcribed on this Mac."; mode segmented control + explanation; rows: Title (placeholder "Optional, e.g. Weekly with Anna"), Microphone, Participants ("Detect automatically", "2 people" … "10 people"), Language, Live transcript switch; mode hint; buttons "Floating Live Transcript" and "Start Recording" (⌘↩).
 

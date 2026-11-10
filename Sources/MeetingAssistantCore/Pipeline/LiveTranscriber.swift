@@ -13,6 +13,10 @@ public struct LiveLine: Identifiable, Hashable, Sendable {
     public var text: String
     public var speaker: String?      // nil while the diarizer has not caught up
     public var isFinal: Bool
+    public init(id: String, track: Track, start: Double, end: Double, text: String, speaker: String?, isFinal: Bool) {
+        self.id = id; self.track = track; self.start = start; self.end = end
+        self.text = text; self.speaker = speaker; self.isFinal = isFinal
+    }
 }
 
 /// Live transcription while recording. Each track is cut into utterances by Silero VAD;
@@ -46,6 +50,9 @@ public actor LiveTranscriber {
     private var continuations: [Track: AsyncStream<[Float]>.Continuation] = [:]
     private var workers: [Task<Void, Never>] = []
     private let chunk = 4096
+    /// In a call the mic is diarized too (people in the room); its main voice is "me".
+    private var meSlot: Int?
+    private var meLocked = false
 
     public init(mode: MeetingMode, onUpdate: @escaping Update) {
         self.mode = mode
@@ -90,9 +97,8 @@ public actor LiveTranscriber {
 
     private func diarizes(_ t: Track) -> Bool {
         switch mode {
-        case .call: return t == .system
+        case .call, .hybrid: return true
         case .inPerson: return t == .mic
-        case .hybrid: return true
         }
     }
 
@@ -168,15 +174,38 @@ public actor LiveTranscriber {
     /// Speaker of one word: fixed for single-speaker tracks, otherwise the dominant Nemotron
     /// slot over the word's span, or nil while the diarizer has not reached that time yet.
     private func speaker(for w: Word, track t: Track) -> String? {
-        if mode == .call && t == .mic { return "me" }
-        guard let s = streams[t], s.diarizer != nil else { return "\(t.rawValue)-0" }
+        let callMic = mode == .call && t == .mic
+        guard let slot = slot(for: w, track: t) else {
+            if let s = streams[t], s.diarizer == nil { return callMic ? "me" : "\(t.rawValue)-0" }
+            return nil
+        }
+        if callMic && (meSlot == nil || slot == meSlot) { return "me" }
+        return "\(t.rawValue)-\(slot)"
+    }
+
+    /// The dominant Nemotron slot over a word's span; nil without a diarizer or while it lags.
+    private func slot(for w: Word, track t: Track) -> Int? {
+        guard let s = streams[t], s.diarizer != nil else { return nil }
         let frames = s.probs.count / 8
         let a = max(0, Int(w.start * 100) - 5), b = max(a + 1, Int(w.end * 100) + 5)
         guard b <= frames else { return nil }
         var sums = [Float](repeating: 0, count: 8)
         for f in a..<b { for k in 0..<8 { sums[k] += s.probs[f * 8 + k] } }
         guard let best = sums.indices.max(by: { sums[$0] < sums[$1] }), sums[best] > 0.1 * Float(b - a) else { return nil }
-        return "\(t.rawValue)-\(best)"
+        return best
+    }
+
+    /// In a call, the slot with most of the mic's own words (echo of the call left out) is the
+    /// user. It is fixed once it clearly leads, so earlier lines do not change names.
+    private func updateMeSlot(micWords: [Word]) {
+        guard mode == .call, !meLocked else { return }
+        var counts: [Int: Int] = [:]
+        for w in micWords { if let k = slot(for: w, track: .mic) { counts[k, default: 0] += 1 } }
+        let ranked = counts.sorted { $0.value > $1.value }
+        guard let top = ranked.first else { return }
+        meSlot = top.key
+        let second = ranked.count > 1 ? ranked[1].value : 0
+        if top.value >= 25 && top.value >= 2 * second { meLocked = true }
     }
 
     /// Split every utterance at speaker changes and publish the resulting lines.
@@ -191,6 +220,9 @@ public actor LiveTranscriber {
             let sys = utterances.values.filter { $0.track == .system }.flatMap(\.words)
             let mic = utterances.values.filter { $0.track == .mic }.flatMap(\.words).sorted { $0.start < $1.start }
             for (w, e) in zip(mic, Merger.echoMask(mic: mic, system: sys)) where e { echo.insert(w) }
+        }
+        if mode == .call {
+            updateMeSlot(micWords: utterances.values.filter { $0.track == .mic }.flatMap(\.words).filter { !echo.contains($0) })
         }
         for (id, u) in utterances {
             let words = u.track == .mic && !echo.isEmpty ? u.words.filter { !echo.contains($0) } : u.words
@@ -212,5 +244,32 @@ public actor LiveTranscriber {
             if let c = current { out.append(c) }
         }
         onUpdate(out.sorted { $0.start < $1.start })
+    }
+}
+
+/// Friendly names for live speaker ids, in order of first appearance: "me" is the user's name
+/// (or "Me"); in a call, voices on the call audio are "Remote 1, 2…", all others "Speaker 1, 2…".
+/// Remote and Speaker have their own counters.
+public struct LiveSpeakerLabels: Sendable {
+    public let mode: MeetingMode
+    public let myName: String
+    private var labels: [String: String] = [:]
+    private var speakers = 0
+    private var remotes = 0
+
+    public init(mode: MeetingMode, myName: String) {
+        self.mode = mode
+        let n = myName.trimmingCharacters(in: .whitespaces)
+        self.myName = n.isEmpty ? "Me" : n
+    }
+
+    public mutating func label(for id: String) -> String {
+        if id == "me" { return myName }
+        if let l = labels[id] { return l }
+        let l: String
+        if mode == .call && id.hasPrefix("system") { remotes += 1; l = "Remote \(remotes)" }
+        else { speakers += 1; l = "Speaker \(speakers)" }
+        labels[id] = l
+        return l
     }
 }

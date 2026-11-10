@@ -38,7 +38,7 @@ final class AssistController: ObservableObject {
     @Published var listState: StepState = .idle
 
     // Preparation: a planned meeting from Aya, or template / client / project chosen freely.
-    @Published var meetingID: String? { didSet { if meetingID != oldValue { meetingChosen() } } }
+    @Published var meetingID: String? { didSet { if meetingID != oldValue { meetingChosen(previous: oldValue) } } }
     @Published var clientID: String? { didSet { if clientID != oldValue { loadPreview() } } }
     @Published var projectID: String? { didSet { if projectID != oldValue { loadPreview() } } }
     @Published var templateID: String? { didSet { if templateID != oldValue { loadPreview() } } }
@@ -60,7 +60,10 @@ final class AssistController: ObservableObject {
     @Published var paused = false
     @Published var startState: StepState = .idle
     var context: AssistContext?
-    private var engine: AssistEngine?
+    var engine: AssistEngine?
+    /// "What did I miss?": the answer, and for how many minutes.
+    @Published var catchUp: (minutes: Int, text: String)?
+    @Published var catchUpState: StepState = .idle
     private var sessionID: String?
     private let sequence = PublishSequence()
 
@@ -71,7 +74,12 @@ final class AssistController: ObservableObject {
     @Published var targetRecord: AyaRecord?
     /// Meetings in Aya on the recording's day, to attach the recap to.
     @Published var dayMeetings: [AyaRecord] = []
-    @Published var recapFields: [ProposedValue] = []
+    @Published var recapFields: [ProposedValue] = [] { didSet { if recapFields != oldValue { saveDraftSoon() } } }
+    /// The session `record` belongs to.
+    var recordID: String?
+    var draftSave: Task<Void, Never>?
+    /// The final transcript of the meeting under review (nil until it is ready).
+    @Published var reviewTranscript: Transcript?
     @Published var recapState: StepState = .idle
     /// The template's tables in the review: live values, completed from the final transcript, edited.
     @Published var reviewTables: [TemplateTable] = []
@@ -82,6 +90,10 @@ final class AssistController: ObservableObject {
 
     init(app: AppState) {
         self.app = app
+        // Save the last recap edits when the app quits within the autosave delay.
+        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.flushDraft() }
+        }
         guard !config.orgId.isEmpty, hasAPIKey else { return }
         if !config.isComplete || templates.isEmpty {
             // First start after meeting templates were introduced: pick the new lists.
@@ -113,6 +125,18 @@ final class AssistController: ObservableObject {
         return URL(string: "https://app.hey-aya.ai/org/\(enc)")
     }
     var service: AyaService? { AyaService(config: config) }
+
+    /// A list in the Aya web app (app.hey-aya.ai/workspace/<ws>/recordlist/<list>), or one record in it.
+    func ayaURL(_ slot: AyaSlot, record id: String? = nil) -> URL? {
+        guard let ref = config.list(slot), let ws = ref.workspaceId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+              let list = ref.techName.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else { return nil }
+        var s = "https://app.hey-aya.ai/workspace/\(ws)/recordlist/\(list)"
+        if let id, !id.isEmpty, let r = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) { s += "/record/\(r)" }
+        return URL(string: s)
+    }
+
+    /// Where the logo leads: the workspace with the meetings, else the organization.
+    var logoURL: URL? { ayaURL(.meetings) ?? orgURL }
 
     // MARK: - Connection (Settings)
 
@@ -151,12 +175,9 @@ final class AssistController: ObservableObject {
     func loadCatalog() async {
         guard let svc = service else { return }
         do {
-            workspaces = try await svc.client.workspaces()
-            if let first = workspaces.first {
-                specs = try await svc.client.recordSpecs(workspace: first.id)
-                    .filter { $0.isSystem != true }
-                    .sorted { $0.label.localizedCaseInsensitiveCompare($1.label) == .orderedAscending }
-            }
+            let c = try await svc.catalog()
+            workspaces = c.workspaces
+            specs = c.specs
         } catch { connectState = .failed(error.localizedDescription) }
     }
 
@@ -198,6 +219,24 @@ final class AssistController: ObservableObject {
         } catch {
             listState = .failed(error.localizedDescription)
         }
+        // Names for the vocabulary, at most twice a day.
+        if app.vocabulary.useAya, Date().timeIntervalSince(app.vocabulary.ayaFetchedAt ?? .distantPast) > 12 * 3600
+            || app.vocabulary.ayaTermsVersion != Vocabulary.currentAyaTermsVersion {
+            await refreshVocabulary()
+        }
+    }
+
+    /// Company, contact, team and project names from Aya for the vocabulary (spelling in dictations and transcripts).
+    func refreshVocabulary() async {
+        guard let svc = service else { return }
+        let contacts = config.list(.contacts) != nil ? ((try? await svc.refreshList(.contacts)) ?? []) : []
+        let terms = Vocabulary.termsFromAya(companies: clients.map(\.title),
+                                            people: (contacts + members).map(\.title).filter { !$0.contains("@") },
+                                            projects: projects.map(\.title))
+        guard !terms.isEmpty else { return }
+        app.vocabulary.ayaTerms = terms
+        app.vocabulary.ayaFetchedAt = Date()
+        app.vocabulary.ayaTermsVersion = Vocabulary.currentAyaTermsVersion
     }
 
     /// Just the planned meetings (cheap; done each time the preparation screen opens).
@@ -237,13 +276,23 @@ final class AssistController: ObservableObject {
     var plannedMeeting: AyaRecord? { meetingID.flatMap { id in upcoming.first { $0.id == id } } }
 
     /// Picking a planned meeting takes over its client, project and template.
-    private func meetingChosen() {
+    private func meetingChosen(previous: String?) {
         if let m = plannedMeeting {
-            clientID = config.meetingClientField.flatMap { m.linkedID($0) }
-            projectID = config.meetingProjectField.flatMap { m.linkedID($0) }
-            templateID = config.meetingTemplateField.flatMap { m.linkedID($0) }
+            (clientID, projectID, templateID) = links(of: m)
+        } else if let old = previous.flatMap({ id in upcoming.first { $0.id == id } }) {
+            // Back to "New meeting": drop what the planned meeting filled in, keep what the user chose.
+            let l = links(of: old)
+            if clientID == l.0 { clientID = nil }
+            if projectID == l.1 { projectID = nil }
+            if templateID == l.2 { templateID = nil }
         }
         loadPreview()
+    }
+
+    private func links(of m: AyaRecord) -> (String?, String?, String?) {
+        (config.meetingClientField.flatMap { m.linkedID($0) },
+         config.meetingProjectField.flatMap { m.linkedID($0) },
+         config.meetingTemplateField.flatMap { m.linkedID($0) })
     }
 
     private var selectionKey: [String?] { [meetingID, clientID, projectID, templateID] }
@@ -268,7 +317,7 @@ final class AssistController: ObservableObject {
         }
     }
 
-    var canStart: Bool { claudeReady && !app.isRecording && phase == .prepare && !startState.isWorking && !previewState.isWorking }
+    var canStart: Bool { isConnected && claudeReady && !app.isRecording && phase == .prepare && !startState.isWorking && !previewState.isWorking }
 
     func start() async {
         guard let svc = service else { return }
@@ -302,6 +351,7 @@ final class AssistController: ObservableObject {
 
             state = AssistState()
             state.playbook = ctx.playbookItems
+            state.tables = ctx.templateTables
             status = .starting
             paused = false
             phase = .running
@@ -337,6 +387,26 @@ final class AssistController: ObservableObject {
     func setTableCell(row: String, column: String, value: String) {
         Task { await engine?.setTableCell(row: row, column: column, value: value) }
     }
+    /// Summarizes the last minutes of the meeting with a fast model.
+    func whatDidIMiss(minutes: Int) async {
+        guard let binary = claudeBinary, let e = engine else { return }
+        let lines = await e.transcript
+        guard let prompt = AssistPrompts.catchUpPrompt(lines: lines, minutes: minutes, myName: context?.myName ?? "Me",
+                                                       title: context?.title ?? "") else {
+            catchUpState = .failed("Nothing was said yet.")
+            return
+        }
+        catchUpState = .working("Catching up on the last \(minutes) minutes…")
+        do {
+            let r = try await ClaudeCLI.oneShot(binary: binary, system: AssistPrompts.catchUpSystem, prompt: prompt,
+                                                model: "haiku", effort: "low", timeout: 60)
+            catchUp = (minutes, r.text.trimmingCharacters(in: .whitespacesAndNewlines))
+            catchUpState = .idle
+        } catch {
+            catchUpState = .failed(error.localizedDescription)
+        }
+    }
+
     func togglePause() {
         paused.toggle()
         let p = paused
@@ -364,12 +434,15 @@ final class AssistController: ObservableObject {
 
     func openReview(_ id: String) {
         waitTask?.cancel()
+        flushDraft()
         guard let rec = AssistRecord.load(id) else { return }
+        recordID = id
         record = rec
         state = rec.state
         context = rec.context
         crm = nil; crmState = .idle
-        recapFields = []
+        recapFields = rec.recapDraft ?? []
+        reviewTranscript = SessionStore.transcript(id)
         recapState = rec.recapRecordID != nil ? .done("Saved in Aya.") : .idle
         dayMeetings = []
         targetRecord = nil
@@ -424,7 +497,9 @@ final class AssistController: ObservableObject {
                 recapState = .working("Waiting for the final transcript… \(app.progress[id].map { "\(Int($0.fraction * 100)) %" } ?? "")")
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
             }
-            guard !Task.isCancelled, recapFields.isEmpty else { return }
+            guard !Task.isCancelled else { return }
+            carrySpeakerNames(id)
+            guard recapFields.isEmpty else { return }
             if record?.recapRecordID == nil {
                 let needTables = record?.tables == nil && !reviewTables.isEmpty
                 async let recap: Void = draftRecap()
@@ -565,7 +640,7 @@ final class AssistController: ObservableObject {
                         _ = try await svc.client.update(workspace: pRef.workspaceId, list: pRef.techName, id: cid, values: values)
                         updated += 1
                     } else {
-                        if let link = config.contactsClientField { values[link] = .string(clientID) }
+                        if let link = config.contactsClientField { values[link] = ps.linkValue(link, id: clientID) }
                         let r = try await svc.client.create(workspace: pRef.workspaceId, list: pRef.techName, values: values)
                         rec.createdContactIDs.append(r.id)
                         created += 1
@@ -586,8 +661,9 @@ final class AssistController: ObservableObject {
 
     func finishReview() {
         waitTask?.cancel()
+        flushDraft()
         phase = .prepare
-        record = nil; recapFields = []; crm = nil; reviewTables = []; tablesState = .idle
+        record = nil; recordID = nil; reviewTranscript = nil; recapFields = []; crm = nil; reviewTables = []; tablesState = .idle
         recapState = .idle; crmState = .idle
         state = AssistState(); status = .idle
         meetingID = nil; clientID = nil; projectID = nil; templateID = nil; goal = ""

@@ -275,7 +275,7 @@ struct SessionDetailView: View {
     private func newSpeaker(for turn: Turn) {
         edit { tr in
             let id = "manual-\(UUID().uuidString.prefix(6))"
-            tr.speakers.append(Speaker(id: id, label: "Speaker \(tr.speakers.count + 1)", track: turn.track, embedding: nil, isMe: false))
+            tr.speakers.append(Speaker(id: id, label: tr.unusedSpeakerLabel(), track: turn.track, embedding: nil, isMe: false))
             tr.reassign(turn: turn.id, to: id)
         }
     }
@@ -301,7 +301,7 @@ struct SessionDetailView: View {
                             Button {
                                 state.retranscribe(info.id, engine: e, language: l)
                             } label: {
-                                if l == current && e == state.prefs.engine { Label(l.title, systemImage: "checkmark") }
+                                if l == current && e.rawValue == (transcript?.engine ?? state.prefs.engine.rawValue) { Label(l.title, systemImage: "checkmark") }
                                 else { Text(l.title) }
                             }
                         }
@@ -360,13 +360,7 @@ struct SessionDetailView: View {
     }
 
     private func markMe(_ s: Speaker) {
-        edit { t in
-            for i in t.speakers.indices {
-                let isMe = t.speakers[i].id == s.id
-                if t.speakers[i].isMe && !isMe { t.speakers[i].isMe = false; t.speakers[i].label = "Speaker \(i + 1)" }
-                if isMe { t.speakers[i].isMe = true; t.speakers[i].label = state.prefs.myName }
-            }
-        }
+        edit { $0.markMe(s.id, name: state.prefs.myName) }
     }
 }
 

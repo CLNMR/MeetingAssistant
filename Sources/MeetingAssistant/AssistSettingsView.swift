@@ -95,13 +95,14 @@ struct AssistSettingsView: View {
             if assist.specs.isEmpty {
                 Text(current.map { "\($0.label) · \($0.workspaceLabel)" } ?? "—").foregroundStyle(.secondary)
             } else {
+                // Record types of all workspaces; the same name can exist in several, so the key includes the workspace.
                 AyaSelect(selection: Binding<String>(
-                    get: { current?.techName ?? "" },
-                    set: { tech in
-                        guard let spec = assist.specs.first(where: { $0.techName == tech }) else { return }
+                    get: { current.map { "\($0.workspaceId)/\($0.techName)" } ?? "" },
+                    set: { key in
+                        guard let spec = assist.specs.first(where: { specKey($0) == key }) else { return }
                         Task { await assist.setList(slot, spec: spec) }
                     }),
-                    options: [("", "—")] + assist.specs.map { ($0.techName, "\($0.label) · \(assist.workspaceLabel($0.workspaceId))") })
+                    options: [("", "—")] + assist.specs.map { (specKey($0), "\($0.label) · \(assist.workspaceLabel($0.workspaceId))") })
                 .frame(maxWidth: 300)
             }
         } label: {
@@ -111,6 +112,8 @@ struct AssistSettingsView: View {
             }
         }
     }
+
+    private func specKey(_ s: AyaRecordSpec) -> String { "\(s.workspaceId ?? "")/\(s.techName)" }
 
     /// Where filled template tables go: a Markdown field of the meeting.
     @ViewBuilder private var tablesFieldPicker: some View {

@@ -172,8 +172,11 @@ public actor ModelStore {
     }
 
     /// Transcribe one chunk and return words with absolute timestamps.
+    /// `onLanguageCheck` is told when a Parakeet chunk is redone with Qwen3-ASR to get the chosen
+    /// language (the first time this loads Qwen3, about 4 GB), so a progress display can say so.
     public func transcribe(_ audio: [Float], offset: Double, engine: ASREngineKind,
-                           language: TranscriptLanguage) async throws -> [Word] {
+                           language: TranscriptLanguage,
+                           onLanguageCheck: (@Sendable (String) -> Void)? = nil) async throws -> [Word] {
         guard audio.count > 1600 else { return [] }
         switch engine {
         case .parakeetUltra:
@@ -184,6 +187,8 @@ public actor ModelStore {
             // heard another (typically short German replies read as English), redo that
             // chunk with Qwen3-ASR, which accepts the language.
             if language.clearlyNot(r.text) {
+                onLanguageCheck?(qwen == nil ? "Checking the language with Qwen3 (loading the model, about 4 GB)…"
+                                             : "Checking the language with Qwen3…")
                 return try await transcribe(audio, offset: offset, engine: .qwen3Large, language: language)
             }
             let timed = buildWordTimings(from: r.tokenTimings ?? [])

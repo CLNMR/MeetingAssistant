@@ -16,7 +16,7 @@ All user-visible strings in the app are English and are quoted verbatim below. S
 
 | Element | Behaviour |
 |---|---|
-| Logo tile (32 × 32 blue gradient rounded square with a white rounded-triangle mark) | If Aya is configured, clicking it opens the **Aya meetings list** in the browser, at `https://app.hey-aya.ai/workspace/<meetingsWorkspaceId>/recordlist/<meetingsListTechName>`. If no meetings list is chosen, it opens the organization at `https://app.hey-aya.ai/org/<orgId>`. Tooltip: "Open the meetings in Aya". With no org id the logo is inert, with the tooltip "Aya is not connected yet. Connect it in Settings › Assist." Hand cursor when it is a link. 8 px below it: |
+| Logo tile (32 × 32 blue gradient rounded square with a white rounded-triangle mark) | If Aya is configured, clicking it opens the **Aya meetings list** in the browser, at `https://app.hey-aya.ai/workspace/<meetingsWorkspaceId>/recordlist/<meetingsListTechName>`. If no meetings list is chosen, it opens the organization at `https://app.hey-aya.ai/org/<orgId>`. Tooltip: "Open the meetings in Aya", or "Open Aya" when it falls back to the organization. With no org id the logo is inert, with the tooltip "Aya is not connected yet. Connect it in Settings › Assist." Hand cursor when it is a link. 8 px below it: |
 | Mode button "Scribe" (icon-only 32 px, borderless) | Switches to Scribe. Tooltip "Scribe: record and transcribe on this Mac (⌘1)". Shows the active style (primary tint 12 % fill, primary icon) when selected. |
 | Mode button "Assist" | Switches to Assist. Tooltip "Assist: live meeting assistant with Aya and Claude (⌘2)". |
 | *(spacer)* | |
@@ -125,7 +125,7 @@ Padding is 20 px on the backdrop. Every time the screen appears, the planned mee
 - The first card is always **"New meeting"**, with a plus icon and the text "Choose template, client and project yourself" (muted). Its tooltip is "A new meeting is created in Aya afterwards".
 - Then one card per planned meeting. The top line has a calendar icon and the date: "Today 14:00", "Tomorrow 09:30", or "Wed 12 Nov 10:00" (weekday abbreviated, day, month abbreviated, time), or "No date". A **"Notes"** tag (muted) appears if the meeting already has a summary, decisions or next steps. The title is 13 pt medium with up to 2 lines. A third line lists the linked client · project · template titles (11 pt muted, 1 line). The tooltip is the title plus " · already has notes in Aya" when applicable.
 - Selected card: primary 10 % fill, primary 60 % border, primary top line. Unselected: `card` fill, `border`, `textMuted` top line.
-- **Picking a planned meeting** copies its linked client, project and template into the selections. Which link fields are used is configured in Settings. Picking "New meeting" clears only the meeting id and leaves client, project and template as they were.
+- **Picking a planned meeting** copies its linked client, project and template into the selections. Which link fields are used is configured in Settings. Picking "New meeting" after a planned meeting clears the meeting id and every client, project or template that still has the value the planned meeting filled in; values the user changed are kept.
 
 **Client column** (card, fills the height). Eyebrow "Client" with a building icon and the client count on the right. A **Search** field with a magnifier icon. A scrolling list of rows (2 px spacing):
 - The first row (only while the search is empty) is **"No client"**, with a "minus" avatar and the subtitle "Internal meeting, or project only".
@@ -151,14 +151,14 @@ Padding is 20 px on the backdrop. Every time the screen appears, the planned mee
   - When the Claude check failed: a warning icon, the message, and a small secondary **"Check Again"** button.
   - While checking: a spinner with "Checking Claude Code…".
   - Otherwise, with a lock icon (11 pt `textSubtle`): "Claude <Model> via your Claude subscription · transcript text is sent to Claude, audio stays on this Mac" *(dynamic: model capitalised, e.g. "Opus")*.
-- Right: the start StepLine and the **Start Assist** button (agent style, large, pill, mic icon). It is disabled unless Claude is ready (binary found and logged in), no recording is running, the phase is Prepare, start is not already running, and the preview is not loading. Tooltip: "A recording is already running." while recording, else "Starts the recording with live transcript and the assistant."
+- Right: the start StepLine and the **Start Assist** button (agent style, large, pill, mic icon). It is disabled unless Aya is connected, Claude is ready (binary found and logged in), no recording is running, the phase is Prepare, start is not already running, and the preview is not loading. Tooltip: "A recording is already running." while recording, else "Starts the recording with live transcript and the assistant."
 
 **Start flow:**
 1. StepLine "Loading the meeting context from Aya…". Use the loaded preview if there is a selection, load it fresh if the preview is missing, or use an empty context if nothing is selected.
 2. Build the meeting context from the Aya data, goal, mode, "my name" (default "Me") and now.
 3. StepLine "Starting the recording…". Set the recording mode and title (the context title). Force live transcription on, register a hook that receives finished live lines and forwards them to the engine, and register a "recording stopped" callback. Then start a normal recording.
 4. If the recording did not start, undo the hooks and show the app's error message (or "The recording did not start.") in the StepLine. The global error is cleared so no alert appears.
-5. Otherwise save an initial Assist record for the session, reset the live state with the template checklist (the playbook), set the status to Starting, unpause, switch the phase to **Running** and start the engine. Engine state updates carry a sequence number, and updates that arrive out of order on the UI thread are dropped.
+5. Otherwise save an initial Assist record for the session, reset the live state with the template checklist and the template tables, set the status to Starting, unpause, switch the phase to **Running** and start the engine. Engine state updates carry a sequence number, and updates that arrive out of order on the UI thread are dropped.
 
 *Mac implementation:* `AssistPrepView` in `AssistView.swift`. `AssistController.meetingID/clientID/projectID/templateID` (each `didSet` triggers `loadPreview`, and `meetingID` triggers `meetingChosen`). Also `start()`, `canStart`, `searchClients`, `refreshUpcoming`, and `PublishSequence`.
 
@@ -175,7 +175,7 @@ The live screen is full width. Vertical stack with 8 px gaps:
 ├ [Catch-up card]  (only when used)                                       │
 ├ Upper area (scrolls only if too small) ─────────────────────────────────┤
 │  Next-question card (agent surface)                                     │
-│  Panels row: [Summary] ┃ [Open points] ┃ [Playbook]   (resizable widths) │
+│  Panels row: [Summary] ┃ [Open points] ┃ [Checklist]  (resizable widths) │
 │  [Tables card]  (only if the template has tables)                       │
 ├ ═══ resize handle (vertical) ═══ ───────────────────────────────────────┤
 │  Attendees row                                                          │
@@ -208,14 +208,14 @@ Agent surface, 16 px padding. The header has the eyebrow "Next question" (sparkl
 - The alternatives (questions 2…n) are chips in a flow layout, each with a "turn-down-right" icon. Clicking one **promotes** it to first (tooltip "Show this one first").
 - Empty state: "Claude is reading the client context…" while the status is Starting or Thinking, else "Waiting for the conversation…" (17 pt muted).
 
-#### 6.4 Panels row (Summary, Open points, Playbook)
-The three cards sit side by side, separated by **horizontal resize handles** (8 px wide hit area, a 3 × 36 capsule that turns primary 60 % on hover, resize cursor). The Playbook card exists only if the template produced checklist items.
+#### 6.4 Panels row (Summary, Open points, Checklist)
+The three cards sit side by side, separated by **horizontal resize handles** (8 px wide hit area, a 3 × 36 capsule that turns primary 60 % on hover, resize cursor). The Checklist card exists only if the template produced checklist items.
 
-- **Width shares** are stored per user (`summaryShare` default 0.40, `openShare` default 0.30). The playbook gets the rest.
-  - Without the playbook, Summary and Open points are normalised to fill the row.
-  - With the playbook, if summary + open exceeds 0.85, both are scaled down so the playbook keeps ≥ 15 %.
+- **Width shares** are stored per user (`summaryShare` default 0.40, `openShare` default 0.30). The checklist gets the rest.
+  - Without the checklist, Summary and Open points are normalised to fill the row.
+  - With the checklist, if summary + open exceeds 0.85, both are scaled down so the checklist keeps ≥ 15 %.
   - Dragging the handle after Summary trades width between Summary and Open points only, each keeping ≥ 15 %.
-  - Dragging the handle after Open points changes only Open points, clamped so that Open points ≥ 15 % and the playbook ≥ 15 %.
+  - Dragging the handle after Open points changes only Open points, clamped so that Open points ≥ 15 % and the checklist ≥ 15 %.
   - The drag delta is measured from the start of the gesture. The available width is the row width minus the handles, with a minimum of 300.
 - **Panel height**: the upper area's height minus the question card and the tables card, with a minimum of 160. If the window is too small for that, the whole upper area scrolls (scroll indicators appear only then) rather than squeezing the transcript.
 
@@ -227,7 +227,7 @@ The three cards sit side by side, separated by **horizontal resize handles** (8 
 - parked: pause circle, muted text.
 - Clicking the icon toggles between answered and open (tooltip "Mark answered" / "Mark open"). A parked item becomes answered. The change goes to the engine, which tells Claude.
 
-**Playbook** (PanelBox "Playbook", checklist icon, trailing "covered/total"). This is the template's checklist; the user brief calls it "template coverage". A 4 px progress capsule (track `muted`, fill `agent`) shows covered/total. Below it, the items are grouped by section: a section header (11 pt semibold muted) appears whenever the section changes. Each item has an icon button and the text:
+**Checklist** (PanelBox "Checklist", checklist icon, trailing "covered/total"). This is the template's checklist (called "playbook" in the code and data for historical reasons). A 4 px progress capsule (track `muted`, fill `agent`) shows covered/total. Below it, the items are grouped by section: a section header (11 pt semibold muted) appears whenever the section changes. Each item has an icon button and the text:
 - missing: empty circle.
 - partial: half-filled circle in `warning`.
 - covered: filled check circle in `success`, with muted text.
@@ -319,9 +319,9 @@ Then switch the phase to Review, load the day's Aya meetings and the target reco
 **Header:** eyebrow "Meeting review", the title (meeting title or "Meeting"), and the subtitle "<template title> · <date, abbreviated + time>". Buttons on the right:
 - **Delete** (ghost, trash icon). Disabled while the session is busy (recording, queued or transcribing) or missing. Tooltip "Delete the recording, transcript and notes on this Mac". Opens the delete confirmation (§8.7).
 - **Show Transcript** (secondary). Switches to Scribe with this session selected.
-- **Done** (primary, default/Return). **Finish review**: flush the draft, reset everything (phase Prepare, selections, goal, review data) and reload the planned meetings.
+- **Done** (primary; deliberately **not** bound to Return, so pressing Return in the review never closes it). **Finish review**: flush the draft, reset everything (phase Prepare, selections, goal, review data) and reload the planned meetings.
 
-Sections in order: Speakers, Meeting recap, Template tables (if any), During the meeting (if there is any summary, open point or attendee), Update the CRM (only if the meeting has a client).
+Sections in order: Speakers, Meeting recap, Template tables (if any), During the meeting (if there is any summary, open point, attendee or checklist item), Update the CRM (only if the meeting has a client).
 
 #### 8.1 Speakers
 Title "Speakers" (16 pt semibold), subtitle "Names are used in the transcript and the recap. Click a speaker to name them."
@@ -340,7 +340,7 @@ Title "Speakers" (16 pt semibold), subtitle "Names are used in the transcript an
 #### 8.2 Meeting recap
 Header: the title "Meeting recap" and the subtitle "→ <meetings list label> in <workspace label>". On the right:
 - When uploaded: tag **"In Aya"** (success, check icon) and an **"Open in Aya"** link button (secondary pill, external-link icon). It opens `https://app.hey-aya.ai/workspace/<ws>/recordlist/<list>/record/<recordId>`; tooltip "Open this meeting in Aya".
-- **Draft Recap** (agent pill) when there is no draft, or **Draft Again** (secondary pill) when there is. It is disabled while working and replaces the current draft **without confirmation**.
+- **Draft Recap** (agent pill) when there is no draft, or **Draft Again** (secondary pill) when there is. It is disabled while working. **Draft Again** first asks "Draft the recap again?" ("Claude writes a new recap. Your edits to the current one are replaced.", destructive button "Draft Again", Cancel).
 
 **Target row:** the label "Save to", then an Aya select (max 420 px) with these options:
 - "New meeting in Aya";
@@ -360,7 +360,7 @@ When the target is an existing meeting, a hint reads "Fields that already have c
   - anything else: a text field that grows to 6 lines.
 - If the field has a note (e.g. "Removed deadlines not said in the meeting: “…”"), it shows in warning colour with a calendar-exclamation icon.
 
-**Autosave of the draft:** every change to the recap fields (edits, ticks, target changes, speaker renames) schedules a save **600 ms** after the last change into the session's Assist record (`recapDraft`; empty saves as none). Opening another review, finishing the review or re-opening flushes the pending save immediately. Draft writes only apply to the review they were scheduled for.
+**Autosave of the draft:** every change to the recap fields (edits, ticks, target changes, speaker renames) schedules a save **600 ms** after the last change into the session's Assist record (`recapDraft`; empty saves as none). Opening another review, finishing the review, re-opening or quitting the app flushes the pending save immediately. Draft writes only apply to the review they were scheduled for.
 
 **Upload:** button **Create Meeting in Aya** (no target) or **Save to Meeting** (target set). Primary, up-arrow icon, right-aligned, disabled while working. StepLine "Saving in Aya…".
 - Participants: my name plus the present attendees, matched to team members by name.
@@ -384,7 +384,7 @@ Title "During the meeting", subtitle "The live notes as they were when the meeti
 
 #### 8.5 Update the CRM
 Title "Update the CRM", subtitle "Claude compares the client and contact records with what was said. Nothing is changed until you tick it and apply."
-- Button **Propose Updates** (agent pill; **Propose Again** in secondary style once a proposal exists). If the meeting has no client: "This meeting has no client.". StepLine "Claude is reading the CRM records and the transcript…". When nothing is proposed: "No changes proposed.".
+- Button **Propose Updates** (agent pill; **Propose Again** in secondary style once a proposal exists). **Propose Again** first asks "Propose the updates again?" ("Claude makes a new proposal. Your ticks and edits in the current one are replaced.", destructive "Propose Again", Cancel). If the meeting has no client: "This meeting has no client.". StepLine "Claude is reading the CRM records and the transcript…". When nothing is proposed: "No changes proposed.".
 - **Client changes**: a header with a building icon and the client name, then one **ChangeRow** per field. A ChangeRow has a checkbox with the label, "Now" plus the old value (3 lines), the editor (same kinds as above) and the reason (agent colour, quote icon). Proposed changes start unticked.
 - **Contacts**: one box per contact (radius 10, `page` 50 % fill, no shadow). It has a checkbox with the name and, for new contacts, the tag "New contact" (agent, plus icon). When ticked, the contact's changes are listed indented. Changes of existing contacts have their own checkboxes; the fields of a new contact have no per-field checkbox.
 - **Apply Selected (N)** (primary, right-aligned) counts the ticked client fields plus the ticked contacts. It is disabled at 0 or while working. StepLine "Writing to Aya…". Client fields are written in one update. Ticked existing contacts are updated. New contacts are created and linked to the client through the configured contact→client field. Created contact ids are kept in the record.
@@ -423,6 +423,7 @@ Title "Import Recording" (18 pt semibold), intro text "The recording is transcri
 |---|---|
 | Recording | Small secondary button "Choose…" ("Change…" once chosen), followed by the file names joined by " + " (truncated in the middle). Hint: "One file, or two: first your microphone, then the call audio." The file dialog accepts audio and video, multi-select, keeps at most 2 files, and shows the message "Choose one recording, or two files: first your microphone, then the call audio." The first file's creation date becomes the Date. |
 | Date | Date and time picker. Changing the **day** reloads that day's Aya meetings, and a selected meeting not on the new day is cleared. |
+| Mode *(only with two files)* | Segmented "Call" / "Hybrid" (default Call) with the mode's explanation below. With one file the mode is In person. |
 | Meeting in Aya | Aya select: "New meeting in Aya" plus that day's meetings as "HH:MM · Title". Picking a meeting sets the Date to the meeting's time. |
 | Title *(only for a new meeting)* | Text field, placeholder "Optional" |
 | Client / Project / Template *(only for a new meeting)* | Aya selects with "None" plus the cached lists |
@@ -431,8 +432,8 @@ Footer: the StepLine ("Importing…" or the error), **Cancel** (secondary, Esc) 
 
 **Import behaviour:**
 1. If any link is set, load the meeting context from Aya. Client, project and template are passed only when no Aya meeting is chosen. Without a connection this fails with a "not configured" error.
-2. The mode is **Call if two files, In person if one**.
-3. The typed title is used only if the Aya context has no meeting title. The session title is the context title, or the file name if the title is the generic "Meeting".
+2. The mode is the chosen Call or Hybrid with two files, In person with one.
+3. A typed title (only possible for a new meeting) is used as the meeting title. The session title is the context title, or the file name if the title is the generic "Meeting".
 4. Copy the files in as a new session (file 1 = mic, file 2 = system) with the chosen date.
 5. Save an Assist record with an empty live state, apart from the template checklist and tables.
 6. Reload the sessions, queue the session for transcription and open its Review, which waits for the transcript and then drafts.
@@ -496,7 +497,7 @@ The tab uses a grouped form.
   - Meeting templates: "Agenda and questions; they become the meeting's checklist."
   - Meetings: "Planned meetings, and where the recap is saved."
   - Team members: "Your team; internal attendees are linked as participants."
-- The control is an Aya select (max 300 px) with "—" plus every non-system record type of the first workspace, labelled "<label> · <workspace label>" and sorted by label. Before the catalogue has loaded, the current value is shown as plain text instead.
+- The control is an Aya select (max 300 px) with "—" plus every non-system record type of all the organization's workspaces, labelled "<label> · <workspace label>" and sorted by label. Before the catalogue has loaded, the current value is shown as plain text instead.
 - Changing a list stores the workspace and list and refreshes the schemas. For **Contacts**, the contact→client link resets and is auto-picked as the first relation whose key contains "firm". For any list other than Contacts, the lists are also reloaded.
 - **Refresh Fields** button re-reads the schemas ("Reading the lists' fields…", then "Fields updated."). **Show All Lists** appears only when the catalogue is empty and loads it.
 - Footer: "A list is used in the workspace where it is defined. Field details come from the workspace's API documentation."
@@ -603,15 +604,7 @@ It is used for layout checks without a display. The Windows port only needs it a
 
 ---
 
-### Inconsistencies and open points noticed
+### Notes for the port
 
-1. **Naming of the checklist:** the live panel is titled "Playbook", but the Connect text, README and Prepare tag say "checklist", and the review says "Template: X of N points covered". Pick one term for Windows (suggest "Checklist").
-2. **"New meeting" card does not reset** the client, project or template that a previously picked planned meeting filled in. This may be intended ("choose yourself"), but it surprises.
-3. **"Draft Again" / "Propose Again"** silently discard the user's edited draft or proposal. There is no confirmation, even though the draft is autosaved.
-4. **Import mode** is inferred (1 file → In person, 2 files → Call); Hybrid cannot be chosen. A typed title is ignored when the Aya context already has a meeting title.
-5. The **"During the meeting"** section is hidden when only the playbook has content (the condition checks summary, open points and attendees only).
-6. The **rail logo** tooltip says "Open the meetings in Aya", but it falls back to the organization page when no meetings list is set. The code comment says "organization".
-7. **Return = Done** in the review is the window's default action. Text fields in the recap editor may swallow Return, but single-line selects and checkboxes will not, so pressing Return can leave the review unexpectedly. Consider not mapping Enter to Done on Windows.
-8. The **draft is not flushed on app quit**. The 600 ms debounce can lose the last edit if the app quits right after typing.
-9. `canStart` does not check `isConnected`. That is harmless because Prepare is only shown when connected, but worth keeping in mind if Windows routes differently.
-10. **Settings list picker** lists the record types of the **first workspace only**, while the footer says "A list is used in the workspace where it is defined". Lists in other workspaces cannot be chosen from the UI.
+- The code and data files still say "playbook" for the template checklist (`playbook`, `playbookID`, `setPlaybook`). Keep these names in data files for compatibility; the UI says "Checklist".
+- Draft autosave must also flush when the app quits (the Mac does this on `willTerminate`).

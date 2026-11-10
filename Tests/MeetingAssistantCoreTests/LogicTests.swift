@@ -193,15 +193,124 @@ private func w(_ s: String, _ a: Double, _ b: Double) -> Word { Word(w: s, start
     }
 }
 
-/// Splits a real (silent) recording on disk. The only test that touches AppPaths.root, so it
-/// can point the app folder at a temporary directory first.
-@Suite struct SplitAtPauseTests {
-    @Test func splitsAudioAndTranscriptAndRemovesThePause() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("ma-split-\(UUID().uuidString)")
-        setenv("MEETINGASSISTANT_HOME", home.path, 1)
-        defer { try? FileManager.default.removeItem(at: home) }
-        #expect(AppPaths.root.path == home.path)
+@Suite struct SpeakerFixTests {
+    @Test func clustersOfDifferentTracksAreNeverMerged() {
+        let a: [Float] = [1, 0, 0], b: [Float] = [0, 1, 0]
+        // The mic voice and the call voice are identical, the two mic voices differ.
+        let c = ["mic-0": a, "system-0": a, "mic-1": b]
+        let w = ["mic-0": 10.0, "system-0": 10, "mic-1": 5]
+        let auto = SpeakerMath.mergeClusters(c, weights: w, target: nil, autoMergeAbove: 0.8)
+        #expect(Set(auto.values) == ["mic-0", "system-0", "mic-1"])
+        // A participants target counts everyone, but only same-track clusters merge to reach it.
+        let two = SpeakerMath.mergeClusters(c, weights: w, target: 2, autoMergeAbove: 0.8)
+        #expect(two["mic-1"] == "mic-0" && two["system-0"] == "system-0")
+        // Nothing left to merge within a track: stays above the target rather than mixing tracks.
+        let one = SpeakerMath.mergeClusters(c, weights: w, target: 1, autoMergeAbove: 0.8)
+        #expect(Set(one.values) == ["mic-0", "system-0"])
+    }
 
+    @Test func trackWithoutSegmentsUsesItsOwnSpeakerID() {
+        let r = TrackResult(track: .system, words: [w("hallo", 0, 1)], segments: [], fixedSpeaker: "system-0")
+        #expect(Merger.assignSpeakers(r).map(\.1) == ["system-0"])
+    }
+
+    private func transcript(_ labels: [(String, String, Bool)]) -> Transcript {
+        Transcript(turns: labels.enumerated().map { i, l in
+                       Turn(id: i, speaker: l.0, start: Double(i * 10), end: Double(i * 10 + 5), text: "x", track: .mic, words: [])
+                   },
+                   speakers: labels.map { Speaker(id: $0.0, label: $0.1, track: .mic, embedding: nil, isMe: $0.2) },
+                   engine: "t", createdAt: Date(), processingSeconds: 0)
+    }
+
+    @Test func newSpeakerGetsTheLowestUnusedNumber() {
+        let t = transcript([("a", "Speaker 2", false), ("b", "Erika Musterfrau", false), ("c", "Speaker 1", false)])
+        #expect(t.unusedSpeakerLabel() == "Speaker 3")
+        let t2 = transcript([("a", "Speaker 2", false), ("b", "Speaker 3", false)])
+        #expect(t2.unusedSpeakerLabel() == "Speaker 1")
+    }
+
+    @Test func thisIsMeRelabelsThePreviousMeWithoutDuplicates() {
+        var t = transcript([("me", "Max Beispiel", true), ("a", "Speaker 1", false), ("b", "Speaker 2", false)])
+        t.markMe("b", name: "Max Beispiel")
+        #expect(t.speakers.map(\.label) == ["Speaker 3", "Speaker 1", "Max Beispiel"])
+        #expect(t.speakers.map(\.isMe) == [false, false, true])
+        t.markMe("a", name: "  ")
+        #expect(t.speakers.first { $0.id == "a" }?.label == "Me")
+        #expect(t.speakers.first { $0.id == "b" }?.label == "Speaker 2")
+    }
+
+    @Test func liveLabelsUseTheNameAndSeparateCounters() {
+        var call = LiveSpeakerLabels(mode: .call, myName: "Max Beispiel")
+        #expect(["me", "mic-1", "system-0", "system-1", "mic-2", "system-0"].map { call.label(for: $0) }
+                == ["Max Beispiel", "Speaker 1", "Remote 1", "Remote 2", "Speaker 2", "Remote 1"])
+        var room = LiveSpeakerLabels(mode: .inPerson, myName: "")
+        #expect(["me", "mic-0", "mic-1"].map { room.label(for: $0) } == ["Me", "Speaker 1", "Speaker 2"])
+    }
+
+    @Test func forgetIgnoresCase() {
+        var lib = SpeakerLibrary()
+        lib.learn(name: "Erika Musterfrau", embedding: [1, 0])
+        lib.forget(name: "erika MUSTERFRAU ")
+        #expect(lib.entries.isEmpty)
+    }
+}
+
+/// The app folder is pointed at one temporary directory for the whole test run (AppPaths.root is
+/// read once), so every test that touches files is in this serialized suite.
+private let testHome: URL = {
+    let home = FileManager.default.temporaryDirectory.appendingPathComponent("ma-test-\(UUID().uuidString)")
+    setenv("MEETINGASSISTANT_HOME", home.path, 1)
+    return home
+}()
+
+private func writeSilence(_ url: URL, seconds: Int, rate: Double = 8000) throws {
+    let fmt = AVAudioFormat(standardFormatWithSampleRate: rate, channels: 1)!
+    let file = try AVAudioFile(forWriting: url, settings: fmt.settings)
+    let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: AVAudioFrameCount(Double(seconds) * rate))!
+    buf.frameLength = buf.frameCapacity
+    try file.write(from: buf)
+}
+
+@Suite(.serialized) struct SessionFileTests {
+    init() {
+        let home = testHome   // sets MEETINGASSISTANT_HOME before AppPaths.root is first read
+        #expect(AppPaths.root.path == home.path)
+    }
+
+    @Test func sessionFoldersAreUniqueWithinOneSecond() throws {
+        let base = SessionStore.folderName(for: Date(timeIntervalSince1970: 2_000_000))
+        let a = try SessionStore.createSessionFolder(base: base)
+        let b = try SessionStore.createSessionFolder(base: base)
+        #expect(a == base && b == base + "_2")
+    }
+
+    @Test func noModelsFolderIsCreated() throws {
+        try AppPaths.ensure()
+        #expect(!FileManager.default.fileExists(atPath: AppPaths.root.appendingPathComponent("Models").path))
+    }
+
+    @Test func wavTracksAreReadAndCafWins() throws {
+        let id = try SessionStore.createSessionFolder(base: "wav-test")
+        let wav = AppPaths.session(id).appendingPathComponent("mic.wav")
+        try writeSilence(wav, seconds: 3)
+        #expect(AppPaths.track(id, .mic) == wav)
+        #expect(abs(SessionStore.audioDuration(id, tracks: [.mic]) - 3) < 0.01)
+        try writeSilence(AppPaths.newTrack(id, .mic), seconds: 2)
+        #expect(AppPaths.track(id, .mic).pathExtension == "caf")
+    }
+
+    @Test func interruptedRecordingGetsItsLength() throws {
+        let id = try SessionStore.createSessionFolder(base: "crash-test")
+        try writeSilence(AppPaths.newTrack(id, .mic), seconds: 4)
+        try writeSilence(AppPaths.newTrack(id, .system), seconds: 5)
+        let info = SessionInfo(id: id, title: "Crash", startedAt: Date(), durationSec: 0, mode: .call,
+                               tracks: [.mic, .system], expectedSpeakers: nil, language: nil, status: .recording)
+        let r = SessionStore.recoverInterrupted(info)
+        #expect(r.status == .recorded)
+        #expect(abs(r.durationSec - 5) < 0.01)
+    }
+
+    @Test func splitsAudioAndTranscriptAndRemovesThePause() throws {
         let id = "2026-01-01_10-00-00"
         try FileManager.default.createDirectory(at: AppPaths.session(id), withIntermediateDirectories: true)
         let fmt = AVAudioFormat(standardFormatWithSampleRate: 8000, channels: 1)!
@@ -237,5 +346,32 @@ private func w(_ s: String, _ a: Double, _ b: Double) -> Word { Word(w: s, start
         let t2 = try #require(SessionStore.transcript(second.id))
         #expect(t2.turns.map(\.text) == ["zweites meeting fängt jetzt an"])
         #expect(abs(t2.turns[0].start - 2) < 0.01)
+    }
+
+    @Test func splitGivesPartTwoItsOwnAssistRecord() throws {
+        let id = try SessionStore.createSessionFolder(base: "assist-split")
+        try writeSilence(AppPaths.newTrack(id, .mic), seconds: 100)
+        try SessionStore.save(SessionInfo(id: id, title: "Assist", startedAt: Date(), durationSec: 100, mode: .inPerson,
+                                          tracks: [.mic], expectedSpeakers: nil, language: nil, status: .recorded))
+        let context = AssistContext(clientID: "c", clientTitle: "MUSTER SOLAR", clientFieldList: [], contacts: [],
+                                    playbookID: nil, playbookTitle: nil, playbookGoal: nil, playbookItems: [], recaps: [],
+                                    goal: "", mode: .inPerson, myName: "Max Beispiel", date: Date())
+        var record = AssistRecord(context: context, state: AssistState(),
+                                  lines: [AssistLine(start: 10, speaker: "A", text: "eins"),
+                                          AssistLine(start: 70, speaker: "B", text: "zwei")])
+        record.recapRecordID = "rec1"
+        record.recapUploadedAt = Date()
+        record.recapDraft = []
+        try record.save(id)
+
+        let second = try SessionEdit.split(id, at: 60)
+        let first = try #require(AssistRecord.load(id))
+        #expect(first.lines.map(\.text) == ["eins"])
+        #expect(first.recapRecordID == "rec1")
+        let r2 = try #require(AssistRecord.load(second.id))
+        #expect(r2.lines.map(\.text) == ["zwei"])
+        #expect(abs(r2.lines[0].start - 10) < 0.01)
+        #expect(r2.context.clientTitle == "MUSTER SOLAR")
+        #expect(r2.recapRecordID == nil && r2.recapUploadedAt == nil && r2.recapDraft == nil)
     }
 }

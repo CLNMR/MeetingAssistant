@@ -30,7 +30,11 @@ public struct SpeakerLibrary: Codable, Sendable {
         }
     }
 
-    public mutating func forget(name: String) { entries.removeAll { $0.name == name } }
+    /// Matches the name like `learn` does: ignoring case and surrounding spaces.
+    public mutating func forget(name: String) {
+        let n = name.trimmingCharacters(in: .whitespaces)
+        entries.removeAll { $0.name.caseInsensitiveCompare(n) == .orderedSame }
+    }
 }
 
 public enum SpeakerMath {
@@ -51,8 +55,15 @@ public enum SpeakerMath {
         return normalize(acc)
     }
 
-    /// Greedily merge the most similar clusters until at most `target` remain.
-    /// Returns a mapping old id -> surviving id.
+    /// The track part of a cluster id ("mic-2" -> "mic"); ids without one share a group.
+    static func trackOf(_ id: String) -> Substring {
+        guard let dash = id.firstIndex(of: "-") else { return "" }
+        return id[..<dash]
+    }
+
+    /// Greedily merge the most similar clusters until at most `target` remain (counted over all
+    /// clusters). Only clusters of the same track ("mic-*" with "mic-*", "system-*" with "system-*")
+    /// are merged. Returns a mapping old id -> surviving id.
     public static func mergeClusters(_ centroids: [String: [Float]], weights: [String: Double],
                                      target: Int?, autoMergeAbove: Float) -> [String: String] {
         var c = centroids
@@ -61,7 +72,7 @@ public enum SpeakerMath {
         while c.count > 1 {
             var best: (String, String, Float)?
             let keys = c.keys.sorted()
-            for i in keys.indices { for j in (i + 1)..<keys.count {
+            for i in keys.indices { for j in (i + 1)..<keys.count where trackOf(keys[i]) == trackOf(keys[j]) {
                 let s = cosine(c[keys[i]]!, c[keys[j]]!)
                 if s > (best?.2 ?? -2) { best = (keys[i], keys[j], s) }
             } }
@@ -100,13 +111,19 @@ public enum VoiceprintStore {
     public static func save(_ v: Voiceprint) throws { try AppPaths.ensure(); try JSONIO.write(v, to: AppPaths.voiceprint) }
     public static func delete() { try? FileManager.default.removeItem(at: AppPaths.voiceprint) }
 
-    /// Enroll from a recording of the user's voice (needs at least ~10 s of speech).
+    /// Seconds of detected speech a voice sample needs.
+    public static let minimumSpeechSeconds: Double = 8
+    /// Seconds the user records (reads aloud) before the sample can be finished; leaves room for
+    /// pauses so the speech in it reaches `minimumSpeechSeconds`.
+    public static let recordingSeconds: Double = 15
+
+    /// Enroll from a recording of the user's voice (needs `minimumSpeechSeconds` of speech).
     public static func enroll(name: String, samples: [Float]) async throws -> Voiceprint {
         let regions = try await ModelStore.shared.speechRegions(samples)
         var speech: [Float] = []
         for r in regions { speech += AudioIO.slice(samples, r.start, r.end) }
         let seconds = Double(speech.count) / 16_000
-        guard seconds >= 8 else { throw PipelineError.enrollmentTooShort(seconds) }
+        guard seconds >= minimumSpeechSeconds else { throw PipelineError.enrollmentTooShort(seconds) }
         // Average embeddings of ~6 s windows for a stable print.
         var embs: [[Float]] = []
         let win = 6 * 16_000
@@ -126,7 +143,9 @@ public enum PipelineError: LocalizedError {
     case noAudio
     public var errorDescription: String? {
         switch self {
-        case .enrollmentTooShort(let s): return String(format: "Only %.0f s of speech detected. Please speak for at least 15 seconds.", s)
+        case .enrollmentTooShort(let s):
+            return String(format: "Only %.0f s of speech detected; at least %.0f s are needed. Please record again and keep reading without long pauses.",
+                          s, VoiceprintStore.minimumSpeechSeconds)
         case .noAudio: return "The recording contains no audio."
         }
     }

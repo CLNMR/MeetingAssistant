@@ -9,6 +9,7 @@ struct SettingsView: View {
         TabView {
             GeneralSettings().tabItem { Label("General", systemImage: "gearshape") }
             DictationSettings().tabItem { Label("Dictation", systemImage: "keyboard") }
+            VocabularySettings().tabItem { Label("Vocabulary", systemImage: "character.book.closed") }
             VoiceSettings().tabItem { Label("Voices", systemImage: "person.wave.2") }
             ModelSettings().tabItem { Label("Models", systemImage: "cpu") }
             AssistSettingsView(assist: state.assist).tabItem { Label("Assist", systemImage: "sparkles") }
@@ -62,15 +63,43 @@ private struct DictationSettingsForm: View {
         Form {
             Section {
                 Toggle("Push-to-talk dictation", isOn: $state.prefs.dictationEnabled)
-                LabeledContent("Shortcut") {
+                LabeledContent("Word for word") {
                     ShortcutRecorder(hotKey: $state.prefs.dictationHotKey,
                                      onRecordingChange: { state.suspendDictationShortcut($0) })
                 }
                 .disabled(!state.prefs.dictationEnabled)
+                LabeledContent("Scribe+") {
+                    ShortcutRecorder(hotKey: $state.prefs.scribePlusHotKey,
+                                     onRecordingChange: { state.suspendDictationShortcut($0) })
+                }
+                .disabled(!state.prefs.dictationEnabled)
                 if let e = state.hotKeyError { Text(e).font(.caption).foregroundStyle(.red) }
-                Text("Hold the shortcut in any app and speak. When you let go, the text is transcribed on this Mac, copied to the clipboard and pasted where your cursor is.")
+                Text("Hold a shortcut in any app and speak. When you let go, the text is transcribed on this Mac and pasted where your cursor is. Scribe+ also has Claude turn it into clean written text: filler words and false starts go, self-corrections are applied, punctuation is fixed.")
                     .font(.callout).foregroundStyle(.secondary)
-                Text("Use a key combination (e.g. ⌃⌥Space) or press and release modifier keys only, such as right ⌥ or fn + left ⌃. With modifier-only shortcuts, pressing any other key while holding them cancels the dictation, so normal shortcuts keep working.")
+                Text("Use a key combination (e.g. ⌃⌥Space) or modifier keys only, such as right ⌥ or right ⌥ + right ⌘. If the Scribe+ shortcut contains the other one, adding its extra key while you dictate switches to Scribe+. With modifier-only shortcuts, pressing any other key while holding them cancels the dictation, so normal shortcuts keep working.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("Scribe+") {
+                LabeledContent("Claude Code") {
+                    if state.assist.claudeReady {
+                        Label("Ready", systemImage: "checkmark.circle.fill").foregroundStyle(Aya.success)
+                    } else {
+                        Text("Not set up – see Settings › Assist").foregroundStyle(Aya.textMuted)
+                    }
+                }
+                LabeledContent("Model") {
+                    AyaSelect(selection: $state.prefs.scribePlusModel,
+                              options: [("sonnet", "Sonnet – careful, 2–4 s"), ("haiku", "Haiku – fastest, about 1 s")]).frame(maxWidth: 260)
+                }
+                Toggle("Use the text around the cursor as context", isOn: $state.prefs.scribePlusContext)
+                Toggle("Keep Claude ready (saves about 3 s per dictation, uses about 200 MB memory)", isOn: $state.prefs.scribePlusWarm)
+                Text("Scribe+ runs Claude through your Claude subscription. The transcript goes to Anthropic, and with this option also up to 1,200 characters before and 300 after the cursor (never from password fields) and the app’s name, so the text fits the conversation, e.g. “du” or “Sie”. If Claude fails, the word-for-word text is pasted.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("Pasting") {
+                Toggle("Fit spaces and capitals to the text around the cursor", isOn: $state.prefs.fitToCursor)
+                Toggle("Mute other sound while dictating", isOn: $state.prefs.muteWhileDictating)
+                Text("The text stays on the clipboard after pasting. If you click into another field before it arrives, it is only copied, not pasted.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Permission") {
@@ -84,15 +113,101 @@ private struct DictationSettingsForm: View {
                         }
                     }
                 }
-                Text("Needed to paste into other apps and to detect modifier-only shortcuts like fn + ⌃. Without it, the text is only copied to the clipboard.")
+                Text("Needed to paste into other apps, to read the text around the cursor and to detect modifier-only shortcuts like fn + ⌃. Without it, the text is only copied to the clipboard.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section {
-                Text("Uses Parakeet Ultra, which detects German, English and 23 other languages automatically. The microphone is the one chosen for recordings.")
+                Text("Uses Parakeet Ultra, which detects German, English and 23 other languages automatically. The microphone is the one chosen for recordings. If a transcription fails, the recording is kept for 24 hours and can be transcribed again from the menu bar menu.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+/// Names and terms spelled the user's way, in dictations and transcripts.
+struct VocabularySettings: View {
+    @EnvironmentObject var state: AppState
+    @State private var newTerm = ""
+    @State private var newSpoken = ""
+    @State private var newWritten = ""
+    @State private var refreshing = false
+
+    var body: some View {
+        Form {
+            Section {
+                Text("Speech recognition writes what it hears, and names come out wrong most. Terms here get your spelling in dictations and in transcripts: the same letters (“hubspot”, “Hub Spot” → “HubSpot”) and, if switched on, words that sound very much alike (“Clawd” → “Claude”). Ordinary German or English words are never changed into a name.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Toggle("Also correct words that sound alike", isOn: $state.vocabulary.fuzzy)
+            }
+            Section("Your terms") {
+                HStack {
+                    TextField("Name or term", text: $newTerm, prompt: Text("e.g. HubSpot"))
+                        .onSubmit(addTerm)
+                    Button("Add", action: addTerm).disabled(newTerm.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+                ForEach(state.vocabulary.terms, id: \.self) { t in
+                    HStack {
+                        Text(t)
+                        Spacer()
+                        Button { state.vocabulary.terms.removeAll { $0 == t } } label: { Image(systemName: "minus.circle") }
+                            .buttonStyle(.plain).foregroundStyle(Aya.textMuted)
+                    }
+                }
+            }
+            Section("Replacements") {
+                HStack {
+                    TextField("Spoken", text: $newSpoken, prompt: Text("n acht n"))
+                    Image(systemName: "arrow.right").foregroundStyle(Aya.textMuted)
+                    TextField("Written", text: $newWritten, prompt: Text("n8n")).onSubmit(addReplacement)
+                    Button("Add", action: addReplacement)
+                        .disabled(newSpoken.trimmingCharacters(in: .whitespaces).isEmpty || newWritten.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+                ForEach(state.vocabulary.replacements) { r in
+                    HStack {
+                        Text(r.spoken).foregroundStyle(Aya.textMuted)
+                        Image(systemName: "arrow.right").foregroundStyle(Aya.textSubtle)
+                        Text(r.written)
+                        Spacer()
+                        Button { state.vocabulary.replacements.removeAll { $0 == r } } label: { Image(systemName: "minus.circle") }
+                            .buttonStyle(.plain).foregroundStyle(Aya.textMuted)
+                    }
+                }
+                Text("Always applied, whole words only; case, spaces and hyphens do not matter.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("From Aya") {
+                Toggle("Use names from Aya", isOn: $state.vocabulary.useAya)
+                LabeledContent("Names") {
+                    HStack {
+                        Text(state.vocabulary.ayaTerms.isEmpty ? "None loaded" : "\(state.vocabulary.ayaTerms.count)")
+                            .foregroundStyle(Aya.textMuted)
+                        Button(refreshing ? "Loading…" : "Refresh") {
+                            refreshing = true
+                            Task { await state.assist.refreshVocabulary(); refreshing = false }
+                        }
+                        .disabled(refreshing || !state.assist.isConnected)
+                    }
+                }
+                Text("Companies (without the legal form), contacts and team members with their last names, and short project names. Refreshed with the Aya lists. Stored only on this Mac.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private func addTerm() {
+        let t = newTerm.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty, !state.vocabulary.terms.contains(t) else { return }
+        state.vocabulary.terms.append(t)
+        newTerm = ""
+    }
+
+    private func addReplacement() {
+        let a = newSpoken.trimmingCharacters(in: .whitespacesAndNewlines), b = newWritten.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !a.isEmpty, !b.isEmpty else { return }
+        state.vocabulary.replacements.append(.init(spoken: a, written: b))
+        newSpoken = ""; newWritten = ""
     }
 }
 
@@ -145,7 +260,7 @@ struct VoiceSettings: View {
     var body: some View {
         Form {
             Section("Your voice") {
-                Text("For in-person meetings MeetingAssistant recognises you by your voice. Record about 20 seconds once.")
+                Text("MeetingAssistant recognises you by your voice. Record a voice sample once: read the text aloud for at least \(Int(VoiceprintStore.recordingSeconds)) seconds (\(Int(VoiceprintStore.minimumSpeechSeconds)) seconds of speech are needed).")
                     .font(.callout).foregroundStyle(.secondary)
                 if let v = voiceprint {
                     LabeledContent("Voice sample") {
@@ -158,8 +273,9 @@ struct VoiceSettings: View {
                 if rec.isRecording {
                     Text(readingText).font(.callout).padding(8).background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
                     LevelMeter(label: String(format: "%.0f s", rec.seconds), icon: "mic", level: rec.level)
-                    Button(rec.seconds < 15 ? "Keep reading… (\(Int(15 - rec.seconds)) s)" : "Finish") { finish() }
-                        .disabled(rec.seconds < 15)
+                    let minimum = VoiceprintStore.recordingSeconds
+                    Button(rec.seconds < minimum ? "Keep reading… (\(Int((minimum - rec.seconds).rounded(.up))) s)" : "Finish") { finish() }
+                        .disabled(rec.seconds < minimum)
                 } else {
                     Button(voiceprint == nil ? "Record Voice Sample" : "Record Again") { start() }
                         .disabled(busy)

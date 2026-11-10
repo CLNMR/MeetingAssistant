@@ -106,7 +106,7 @@ func runAssist(_ args: [String]) -> Never {
             }
 
         case "live":
-            // msctl assist live <session-id> --client <id> [--playbook <id>] [--minutes M]
+            // msctl assist live <session-id> [--meeting|--client|--project|--template <id>] [--minutes M]
             // Plays the session's audio through the real LiveTranscriber (2× speed) into the engine.
             guard let sid = rest.first else { throw AyaError.badRequest("usage: msctl assist live <session-id> --client <id> [--minutes M]") }
             let info = try JSONIO.read(SessionInfo.self, from: AppPaths.info(sid))
@@ -213,7 +213,9 @@ func runAssist(_ args: [String]) -> Never {
         default:
             print("""
             usage: msctl assist check
-                   msctl assist replay <session-id> --client <id> [--playbook <id>] [--speed N] [--minutes M] [--model opus|sonnet|haiku] [--save file]
+                   msctl assist replay <session-id> [--meeting|--client|--project|--template <id>] [--speed N] [--minutes M] [--model opus|sonnet|haiku] [--save file]
+                   msctl assist live <session-id> [--meeting|--client|--project|--template <id>] [--minutes M]
+                   msctl assist tables <session-id> [--record file]
                    msctl assist recap <session-id> [--record file] [--upload-test]
                    msctl assist crm <session-id> [--record file]
             """)

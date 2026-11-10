@@ -69,24 +69,56 @@ public struct AyaService: Sendable {
     }
 
     /// Picks the default list for every slot that is still empty, and moves lists whose record
-    /// type now lives in another workspace. A record type's home workspace (`workspaceId` on the
-    /// spec) is used, because that is where its fields are defined.
+    /// type now lives in another workspace. The record types of all workspaces of the organization
+    /// are read; a record type's home workspace (`workspaceId` on the spec) is used, because that
+    /// is where its fields are defined.
     public func autoSelectLists() async throws -> AyaConfig {
         var cfg = config
-        let workspaces = try await client.workspaces()
-        guard let first = workspaces.first else {
-            throw AyaError.notFound("No workspaces found for this organization id. Check the id: it is part of the Aya URL, app.hey-aya.ai/org/<id>/…")
-        }
-        let specs = try await client.recordSpecs(workspace: first.id)
+        let (workspaces, specs) = try await catalog()
         for slot in AyaSlot.allCases {
             let tech = cfg.list(slot)?.techName ?? slot.defaultTechName
-            guard let spec = specs.first(where: { $0.techName == tech }) else { continue }
-            let ws = workspaces.first { $0.id == spec.workspaceId } ?? first
+            let matching = specs.filter { $0.techName == tech }
+            // Same record type name in several workspaces: keep the configured one if it is among them.
+            guard let spec = matching.first(where: { $0.workspaceId == cfg.list(slot)?.workspaceId }) ?? matching.first,
+                  let ws = workspaces.first(where: { $0.id == spec.workspaceId }) else { continue }
             if cfg.list(slot)?.workspaceId != ws.id || cfg.list(slot) == nil {
                 cfg.setList(slot, AyaListRef(workspaceId: ws.id, workspaceLabel: ws.label, techName: spec.techName, label: spec.label))
             }
         }
         return cfg
+    }
+
+    /// All workspaces of the organization and the record types of all of them (without system
+    /// types), sorted by label. Each record type appears once, with its home workspace.
+    public func catalog() async throws -> (workspaces: [AyaWorkspace], specs: [AyaRecordSpec]) {
+        let workspaces = try await client.workspaces()
+        guard !workspaces.isEmpty else {
+            throw AyaError.notFound("No workspaces found for this organization id. Check the id: it is part of the Aya URL, app.hey-aya.ai/org/<id>/…")
+        }
+        var listed: [(AyaWorkspace, [AyaRecordSpec])] = []
+        for ws in workspaces { listed.append((ws, try await client.recordSpecs(workspace: ws.id))) }
+        return (workspaces, AyaService.mergeSpecs(listed))
+    }
+
+    /// Merges the record-type listings of several workspaces: a type listed by more than one
+    /// workspace appears once, at its home workspace (or the workspace that listed it, when the
+    /// spec names none). System types are left out; sorted by label, then workspace order.
+    public static func mergeSpecs(_ listed: [(AyaWorkspace, [AyaRecordSpec])]) -> [AyaRecordSpec] {
+        let order = Dictionary(listed.enumerated().map { ($0.element.0.id, $0.offset) }, uniquingKeysWith: { a, _ in a })
+        var seen = Set<String>()
+        var out: [AyaRecordSpec] = []
+        for (ws, specs) in listed {
+            for var spec in specs where spec.isSystem != true {
+                if (spec.workspaceId ?? "").isEmpty { spec.workspaceId = ws.id }
+                guard seen.insert("\(spec.workspaceId!)/\(spec.techName)").inserted else { continue }
+                out.append(spec)
+            }
+        }
+        return out.sorted {
+            let c = $0.label.localizedCaseInsensitiveCompare($1.label)
+            if c != .orderedSame { return c == .orderedAscending }
+            return (order[$0.workspaceId ?? ""] ?? .max) < (order[$1.workspaceId ?? ""] ?? .max)
+        }
     }
 
     /// Reads the field schema of every configured list from the workspaces' OpenAPI documents
@@ -141,15 +173,22 @@ public struct AyaService: Sendable {
         AyaCache.schema(slot)?.field(key)?.brickTechName ?? AyaField(key: key, kind: kind, writable: true).brickTechName
     }
 
-    /// Meetings in Aya dated from `from` to `to`, earliest first.
-    public func meetings(from: Date, to: Date, limit: Int = 100) async throws -> [AyaRecord] {
+    /// Meetings in Aya dated from `from` to `to`, earliest first. Pages through the results
+    /// (`pageSize` at a time) until a page reaches `to` or the list ends; stops at `max` records.
+    public func meetings(from: Date, to: Date, pageSize: Int = 100, max: Int = 2000) async throws -> [AyaRecord] {
         guard let ref = config.list(.meetings) else { throw AyaError.notConfigured }
         let dateKey = config.meetingDateField
         let field = brick(dateKey, .datetime, .meetings)
-        let found = try await client.records(workspace: ref.workspaceId, list: ref.techName,
-                                             query: AyaQuery(condition: .init(field: field, valueKey: "value", comparator: "greaterThanEqual",
-                                                                              value: AyaText.iso(from)),
-                                                             sortField: field, descending: false, limit: limit))
+        var query = AyaQuery(condition: .init(field: field, valueKey: "value", comparator: "greaterThanEqual", value: AyaText.iso(from)),
+                             sortField: field, descending: false, limit: pageSize)
+        var found: [AyaRecord] = []
+        while found.count < max {
+            let page = try await client.records(workspace: ref.workspaceId, list: ref.techName, query: query)
+            found += page
+            // Sorted by date: once a page ends at or after `to`, later pages hold nothing in range.
+            if page.count < pageSize || (page.last?.date(dateKey).map { $0 >= to } ?? false) { break }
+            query.offset += pageSize
+        }
         return found.filter { r in r.date(dateKey).map { $0 < to } ?? false }
     }
 

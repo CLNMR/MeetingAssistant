@@ -53,6 +53,23 @@ public final class SystemAudioTap: @unchecked Sendable {
     private var watchFrames: Int64 = 0
     private let lock = NSLock()
     public private(set) var isRunning = false
+    // Stuck-tap watchdog: after a Core Audio overload the tap can keep running but deliver only
+    // digital zeros (seen with Teams: the call went silent for the rest of the recording).
+    private var zeroSince: UInt64 = 0
+    private var lastRebuild = Date.distantPast
+    /// Rebuilds for zeros since audio last came through; after three, the silence is real.
+    private var zeroRebuilds = 0
+    private var overloadListener: AudioObjectPropertyListenerBlock?
+    private var overloadDevice = AudioObjectID(kAudioObjectUnknown)
+    /// Rebuild after this long of exact zeros, and not more often than this.
+    static let stuckAfter: Double = 30
+    /// No buffers at all for this long: the IO never started or died; rebuild (up to 3 times in a row).
+    static let silentIOAfter: Double = 5
+    /// Own lock: the IO thread must never wait for `lock`, which is held while the IO is stopped.
+    private let bufLock = NSLock()
+    private var lastBuffer = Date()
+    private var deadRebuilds = 0
+    private var ioWatch: DispatchSourceTimer?
 
     /// Mute the tapped audio (useful for silent self-tests only).
     public var muted = false
@@ -65,9 +82,30 @@ public final class SystemAudioTap: @unchecked Sendable {
         try buildAndStart()
         installDefaultDeviceListener()
         isRunning = true
+        startIOWatch()
+    }
+
+    /// Checks every few seconds that buffers still arrive.
+    private func startIOWatch() {
+        ioWatch?.cancel()
+        let t = DispatchSource.makeTimerSource(queue: controlQueue)
+        t.schedule(deadline: .now() + Self.silentIOAfter, repeating: Self.silentIOAfter)
+        t.setEventHandler { [weak self] in
+            guard let self, self.isRunning else { return }
+            self.bufLock.lock()
+            let quiet = Date().timeIntervalSince(self.lastBuffer)
+            let due = quiet >= Self.silentIOAfter && self.deadRebuilds < 3
+            if due { self.deadRebuilds += 1 }
+            self.bufLock.unlock()
+            guard due else { return }
+            self.rebuild("No audio buffers for \(Int(quiet)) s")
+        }
+        t.resume()
+        ioWatch = t
     }
 
     public func stop() {
+        ioWatch?.cancel(); ioWatch = nil
         lock.lock(); defer { lock.unlock() }
         isRunning = false
         removeDefaultDeviceListener()
@@ -135,12 +173,70 @@ public final class SystemAudioTap: @unchecked Sendable {
             guard let self, let handler = self.handler, let format = self.format,
                   let copy = Self.tapBuffer(inData, format: format) else { return }
             self.checkRate(frames: Int64(copy.frameLength), hostTime: inTime.pointee.mHostTime)
+            self.watchZeros(copy, hostTime: inTime.pointee.mHostTime)
+            self.markBuffer()
             let time = AVAudioTime(hostTime: inTime.pointee.mHostTime)
             handler(copy, time)
         }, "AudioDeviceCreateIOProcIDWithBlock")
         ioProcID = procID
         try check(AudioDeviceStart(aggregateID, ioProcID), "AudioDeviceStart")
         installRateListener(outputID)
+        installOverloadListener(aggregateID)
+        zeroSince = 0
+        bufLock.lock(); lastBuffer = Date(); bufLock.unlock()
+    }
+
+    private func markBuffer() {
+        bufLock.lock(); lastBuffer = Date(); deadRebuilds = 0; bufLock.unlock()
+    }
+
+    /// Exact zeros for `stuckAfter` seconds: rebuild the tap. When nothing plays this rebuilds
+    /// needlessly but harmlessly (the gap is filled with silence anyway).
+    private func watchZeros(_ buf: AVAudioPCMBuffer, hostTime: UInt64) {
+        guard hostTime > 0, let ch = buf.floatChannelData else { return }
+        let n = Int(buf.frameLength)
+        var silent = true
+        for c in 0..<Int(buf.format.channelCount) where silent {
+            let p = ch[c]
+            for i in stride(from: 0, to: n, by: 4) where p[i] != 0 { silent = false; break }
+        }
+        if !silent { zeroSince = 0; zeroRebuilds = 0; return }
+        if zeroSince == 0 { zeroSince = hostTime; return }
+        guard zeroRebuilds < 3 else { return }
+        guard AVAudioTime.seconds(forHostTime: hostTime - zeroSince) >= Self.stuckAfter else { return }
+        zeroSince = 0
+        zeroRebuilds += 1
+        controlQueue.async { [weak self] in self?.rebuildIfDue("No audio for \(Int(Self.stuckAfter)) s") }
+    }
+
+    private func rebuildIfDue(_ reason: String) {
+        guard isRunning, Date().timeIntervalSince(lastRebuild) >= Self.stuckAfter else { return }
+        rebuild(reason)
+    }
+
+    /// Core Audio reports an IO overload on the aggregate device: rebuild, in case the tap got stuck.
+    private func installOverloadListener(_ device: AudioObjectID) {
+        removeOverloadListener()
+        var addr = AudioObjectPropertyAddress(mSelector: kAudioDeviceProcessorOverload,
+                                              mScope: kAudioObjectPropertyScopeGlobal,
+                                              mElement: kAudioObjectPropertyElementMain)
+        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            self?.controlQueue.asyncAfter(deadline: .now() + 1) { self?.rebuildIfDue("Audio overload") }
+        }
+        if AudioObjectAddPropertyListenerBlock(device, &addr, controlQueue, block) == noErr {
+            overloadListener = block
+            overloadDevice = device
+        }
+    }
+
+    private func removeOverloadListener() {
+        guard let block = overloadListener else { return }
+        var addr = AudioObjectPropertyAddress(mSelector: kAudioDeviceProcessorOverload,
+                                              mScope: kAudioObjectPropertyScopeGlobal,
+                                              mElement: kAudioObjectPropertyElementMain)
+        AudioObjectRemovePropertyListenerBlock(overloadDevice, &addr, controlQueue, block)
+        overloadListener = nil
+        overloadDevice = AudioObjectID(kAudioObjectUnknown)
     }
 
     /// Safety net for rate changes nobody announces: compare the frames actually delivered
@@ -220,6 +316,7 @@ public final class SystemAudioTap: @unchecked Sendable {
 
     private func teardown() {
         removeRateListener()
+        removeOverloadListener()
         if aggregateID != kAudioObjectUnknown {
             if let ioProcID {
                 AudioDeviceStop(aggregateID, ioProcID)
@@ -236,9 +333,10 @@ public final class SystemAudioTap: @unchecked Sendable {
     private func rebuild(_ reason: String) {
         lock.lock(); defer { lock.unlock() }
         guard isRunning else { return }
-        log.info("\(reason), rebuilding tap")
+        log.notice("\(reason, privacy: .public), rebuilding tap")
+        lastRebuild = Date()
         teardown()
-        do { try buildAndStart() } catch { log.error("Tap rebuild failed: \(error.localizedDescription)") }
+        do { try buildAndStart() } catch { log.error("Tap rebuild failed: \(error.localizedDescription, privacy: .public)") }
     }
 
     // MARK: - Default output device changes

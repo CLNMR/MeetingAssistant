@@ -12,7 +12,7 @@ public enum MeetingMode: String, Codable, CaseIterable, Identifiable, Sendable {
     }
     public var explanation: String {
         switch self {
-        case .call: return "Online meeting. Records your microphone and the call audio separately. Your mic is labelled “Me”."
+        case .call: return "Online meeting. Records your microphone and the call audio separately. Your voice is labelled “Me”; other people at your microphone are told apart too."
         case .inPerson: return "Everyone is in the room. Records the microphone only and separates speakers from it."
         case .hybrid: return "Call with several people in the room. Records both and separates speakers on both tracks."
         }
@@ -82,6 +82,11 @@ public struct Transcript: Codable, Sendable {
     public var createdAt: Date
     public var processingSeconds: Double
 
+    public init(turns: [Turn], speakers: [Speaker], engine: String, createdAt: Date, processingSeconds: Double) {
+        self.turns = turns; self.speakers = speakers; self.engine = engine
+        self.createdAt = createdAt; self.processingSeconds = processingSeconds
+    }
+
     public func label(for speakerID: String) -> String {
         speakers.first { $0.id == speakerID }?.label ?? speakerID
     }
@@ -103,6 +108,28 @@ public struct Transcript: Codable, Sendable {
         }
         speakers.removeAll { $0.id == from }
         normalize()
+    }
+
+    /// The lowest "Speaker N" no speaker is called yet.
+    public func unusedSpeakerLabel() -> String {
+        let used = Set(speakers.map { $0.label.lowercased() })
+        var n = 1
+        while used.contains("speaker \(n)") { n += 1 }
+        return "Speaker \(n)"
+    }
+
+    /// Make `id` the user ("This is me"): it gets the user's name (or "Me"); whoever was "me"
+    /// before gets the lowest unused "Speaker N".
+    public mutating func markMe(_ id: String, name: String) {
+        let n = name.trimmingCharacters(in: .whitespaces)
+        for i in speakers.indices where speakers[i].isMe && speakers[i].id != id {
+            speakers[i].isMe = false
+            speakers[i].label = unusedSpeakerLabel()
+        }
+        if let i = speakers.firstIndex(where: { $0.id == id }) {
+            speakers[i].isMe = true
+            speakers[i].label = n.isEmpty ? "Me" : n
+        }
     }
 
     /// Join consecutive turns of the same speaker and renumber.
@@ -149,17 +176,28 @@ public enum AppPaths {
         return newItems.isEmpty ? old : new
     }
     public static var sessions: URL { root.appendingPathComponent("Sessions", isDirectory: true) }
-    public static var models: URL { root.appendingPathComponent("Models", isDirectory: true) }
     public static var voiceprint: URL { root.appendingPathComponent("me-voiceprint.json") }
     public static var speakerLibrary: URL { root.appendingPathComponent("speaker-library.json") }
 
     public static func session(_ id: String) -> URL { sessions.appendingPathComponent(id, isDirectory: true) }
-    public static func track(_ id: String, _ t: Track) -> URL { session(id).appendingPathComponent("\(t.rawValue).caf") }
+    /// A track's audio file for reading: `mic.caf` / `system.caf` as the Mac writes them, or
+    /// `mic.wav` / `system.wav` (e.g. a session written by the Windows app). CAF wins if both exist.
+    /// When neither exists, the CAF path (where a new track is written).
+    public static func track(_ id: String, _ t: Track) -> URL {
+        let caf = newTrack(id, t)
+        let fm = FileManager.default
+        if fm.fileExists(atPath: caf.path) { return caf }
+        let wav = session(id).appendingPathComponent("\(t.rawValue).wav")
+        return fm.fileExists(atPath: wav.path) ? wav : caf
+    }
+    /// Where the Mac writes a new track: always CAF.
+    public static func newTrack(_ id: String, _ t: Track) -> URL { session(id).appendingPathComponent("\(t.rawValue).caf") }
     public static func info(_ id: String) -> URL { session(id).appendingPathComponent("session.json") }
     public static func transcript(_ id: String) -> URL { session(id).appendingPathComponent("transcript.json") }
 
     public static func ensure() throws {
-        for dir in [root, sessions, models] {
+        // No Models/ folder: the models live in the download libraries' own caches.
+        for dir in [root, sessions] {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         }
     }

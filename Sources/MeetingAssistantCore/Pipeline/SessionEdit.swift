@@ -26,12 +26,18 @@ public enum SessionEdit {
         for t in info.tracks {
             let url = AppPaths.track(id, t)
             guard FileManager.default.fileExists(atPath: url.path) else { continue }
-            let tmp = url.deletingLastPathComponent().appendingPathComponent(".trim-\(t.rawValue).caf")
+            // Same container as the original (a .wav from Windows stays a .wav).
+            let tmp = url.deletingLastPathComponent().appendingPathComponent(".trim-\(t.rawValue).\(url.pathExtension)")
             try copyAudio(from: url, to: tmp, start: s, end: e)
             _ = try FileManager.default.replaceItemAt(url, withItemAt: tmp)
         }
         if let tr = SessionStore.transcript(id) {
             try SessionStore.saveTranscript(slice(tr, start: s, end: e), id: id)
+        }
+        if var record = AssistRecord.load(id) {
+            // Live lines can start a moment after the saved length; keep them when the end stays.
+            record.lines = slice(record.lines, start: s, end: e >= info.durationSec ? .infinity : e)
+            try record.save(id)
         }
         info.startedAt = info.startedAt.addingTimeInterval(s)
         info.durationSec = e - s
@@ -48,17 +54,13 @@ public enum SessionEdit {
         guard time >= 1, info.durationSec - time >= 1 else { throw EditError.invalidRange }
 
         let startedAt = info.startedAt.addingTimeInterval(time)
-        let fmt = DateFormatter(); fmt.dateFormat = "yyyy-MM-dd_HH-mm-ss"
-        var newID = fmt.string(from: startedAt)
-        var n = 1
-        while FileManager.default.fileExists(atPath: AppPaths.session(newID).path) { n += 1; newID = "\(fmt.string(from: startedAt))_\(n)" }
-        try FileManager.default.createDirectory(at: AppPaths.session(newID), withIntermediateDirectories: true)
+        let newID = try SessionStore.createSessionFolder(base: SessionStore.folderName(for: startedAt))
 
         do {
             for t in info.tracks {
                 let url = AppPaths.track(id, t)
                 guard FileManager.default.fileExists(atPath: url.path) else { continue }
-                try copyAudio(from: url, to: AppPaths.track(newID, t), start: time, end: info.durationSec)
+                try copyAudio(from: url, to: AppPaths.newTrack(newID, t), start: time, end: info.durationSec)
             }
             let transcript = SessionStore.transcript(id)
             if let transcript {
@@ -70,6 +72,9 @@ public enum SessionEdit {
             second.startedAt = startedAt
             second.durationSec = info.durationSec - time
             if transcript == nil, second.status == .done { second.status = .recorded }
+            if let record = AssistRecord.load(id) {
+                try secondPart(of: record, from: time, end: .infinity).save(newID)
+            }
             try SessionStore.save(second)
             try trim(id, start: 0, end: time)
             return second
@@ -77,6 +82,21 @@ public enum SessionEdit {
             try? FileManager.default.removeItem(at: AppPaths.session(newID))
             throw error
         }
+    }
+
+    /// Assist lines starting between `start` and `end`, moved to start at 0.
+    public static func slice(_ lines: [AssistLine], start: Double, end: Double) -> [AssistLine] {
+        lines.filter { $0.start >= start && $0.start < end }
+             .map { AssistLine(start: $0.start - start, speaker: $0.speaker, text: $0.text) }
+    }
+
+    /// The Assist record for part 2 of a split: the same context and panels, the lines after the
+    /// split point, and nothing that belongs to the first meeting's write-up (it is a new meeting:
+    /// no Aya meeting, upload times, created contacts, filled tables or recap draft).
+    public static func secondPart(of record: AssistRecord, from time: Double, end: Double) -> AssistRecord {
+        var r = AssistRecord(context: record.context, state: record.state, lines: slice(record.lines, start: time, end: end))
+        r.speakersCarried = record.speakersCarried
+        return r
     }
 
     /// The part of a transcript between `start` and `end`, moved to start at 0.

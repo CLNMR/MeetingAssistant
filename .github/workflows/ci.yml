@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use the newest Xcode
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          echo "Using $XCODE"
+          sudo xcode-select -s "$XCODE"
+          swift --version
+      - uses: actions/cache@v4
+        with:
+          path: .build
+          key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+      - name: Build
+        run: swift build --build-tests
+      - name: Test
+        run: swift test --skip-build
+      - name: Check for secrets
+        run: |
+          if git grep -nE 'aya_key_[A-Za-z0-9]{20,}|sk-ant-[A-Za-z0-9-]{20,}' -- ':!*.md'; then
+            echo "Possible API key in the repository"; exit 1
+          fi

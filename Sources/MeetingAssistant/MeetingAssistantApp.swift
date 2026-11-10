@@ -58,9 +58,11 @@ struct MenuBarContent: View {
                 }
             }
         }
-        if state.prefs.dictationEnabled, let k = state.prefs.dictationHotKey {
+        if state.prefs.dictationEnabled {
             Divider()
-            Text("Dictation: hold \(k.display)")
+            if let k = state.prefs.dictationHotKey { Text("Dictation: hold \(k.display)") }
+            if let k = state.prefs.scribePlusHotKey { Text("Scribe+: hold \(k.display)") }
+            DictationMenuItems(dictation: state.dictation)
         }
         if !state.progress.isEmpty {
             Divider()
@@ -73,5 +75,34 @@ struct MenuBarContent: View {
             NSApp.activate(ignoringOtherApps: true)
         }
         Button("Quit") { NSApp.terminate(nil) }.keyboardShortcut("q")
+    }
+}
+
+/// Last text and dictations whose transcription failed (kept for 24 hours).
+private struct DictationMenuItems: View {
+    @ObservedObject var dictation: DictationController
+
+    var body: some View {
+        if dictation.lastText != nil {
+            Button("Copy Last Dictation") { dictation.copyLast() }
+        }
+        if !dictation.unfinished.isEmpty {
+            Menu("Unfinished Dictations (\(dictation.unfinished.count))") {
+                ForEach(dictation.unfinished) { item in
+                    Menu(Self.label(item)) {
+                        Button("Transcribe Again and Copy") { dictation.retry(item) }
+                        Button("Delete") { dictation.discard(item) }
+                    }
+                }
+            }
+        }
+        EmptyView().onAppear { dictation.refreshUnfinished() }
+    }
+
+    static func label(_ item: DictationRecovery.Item) -> String {
+        let f = DateFormatter()
+        f.dateStyle = Calendar.current.isDateInToday(item.recordedAt) ? .none : .short
+        f.timeStyle = .short
+        return "\(f.string(from: item.recordedAt)) · \(Exporter.clock(item.seconds))"
     }
 }

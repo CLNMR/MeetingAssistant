@@ -9,7 +9,7 @@ The app was called MeetingScribe until November 2026. It keeps the same bundle i
 
 **Scribe:**
 
-- **Online calls (Teams, Zoom, Meet, browser):** records your microphone and the call audio as two separate tracks. Your mic is "Me", remote participants are separated automatically.
+- **Online calls (Teams, Zoom, Meet, browser):** records your microphone and the call audio as two separate tracks. Remote participants are separated automatically, and so are people sitting next to you at your microphone; the main voice on the mic is "Me".
 - **In-person meetings:** records the microphone only and separates the speakers in the room. A one-time voice sample lets the app recognise you.
 - **Hybrid:** a call with several people in the room. Both tracks are diarized.
 - **Live transcript** while recording, then an accurate final transcript a few seconds after you stop.
@@ -68,11 +68,13 @@ Assist turns a recording into a live sales/meeting copilot and writes the result
 
 **A meeting:**
 1. Assist mode (⌘2): either pick a meeting planned in Aya (today and the next 14 days; its client, project and template are taken over), or choose a template and/or client and/or project yourself. Optionally a goal, then *Start Assist*. This starts a normal recording with live transcription.
-2. Claude reads the planned meeting, the client record and its contacts, the project, the template (agenda and questions become the checklist) and the last meetings with that client or project, and keeps five panels up to date: the **next question** (with alternatives; *Asked*, *Other*, *Suggest now* ⇧⌘Space), a running **summary**, **open points**, the **attendees** (matched to speakers and Aya contacts) and the template's **checklist**. Markdown tables in a template (e.g. "which modules do you use, in which system") are filled in as the answers come up; the *Tables* card shows progress and opens the full table for corrections. Questions and summary follow the language of the meeting. Ticking items by hand is passed on to Claude. The floating live transcript window shows the next question too.
+2. Claude reads the planned meeting, the client record and its contacts, the project, the template (agenda and questions become the checklist) and the last meetings with that client or project, and keeps six panels up to date: the **next question** (with alternatives; *Asked*, *Other*, *Suggest now* ⇧⌘Space), a running **summary**, **open points**, the **attendees** (matched to speakers and Aya contacts) the template's **checklist** and its **tables**. Markdown tables in a template (e.g. "which modules do you use, in which system") are filled in as the answers come up; the *Tables* card shows progress and opens the full table for corrections. Questions and summary follow the language of the meeting. Ticking items by hand is passed on to Claude. The floating live transcript window shows the next question too.
 3. *Stop*: the final transcript is made as usual, then Claude drafts the **recap** from the meeting list's fields. Choose where it goes: the planned meeting, another Aya meeting from that day (for example one a call bot created), or a new meeting. For an existing meeting its current values are shown and fields that already have content are only overwritten when ticked; links (client, project, template), date and type are filled only where empty, and team members who attended are added as participants. Saving again updates the same meeting. The template's tables are completed from the final transcript, can be edited in the review, and are saved under a heading with the template's name into the field chosen in Settings (automatic: a field named like Protokoll/Leitfaden/Notes, else the summary); tables with more than 30 rows keep only the rows that were answered.
 4. *Propose Updates*: Claude compares the client and contact records with what was said and proposes changes, each with a reason, plus new contacts for attendees not yet in Aya. Nothing is written until you tick it and *Apply*.
 
 A recording made with Assist has an *Assist Recap* button in Scribe, to do steps 3–4 later.
+
+*What did I miss?* in the live view summarizes the last 2, 5 or 10 minutes (Claude Haiku, a few seconds), with questions directed at you first. Deadlines in the recap that nobody said ("Angebot schicken (bis Freitag)") are taken out again, and the review says which.
 
 **How it talks to Claude:** one `claude -p --input-format stream-json` process per meeting, with no tools, no MCP servers and none of your Claude Code settings. Every 20–60 s (Settings › Assist › Update frequency) it receives the newly finished transcript lines and answers with JSON lines that each change one panel; they are applied as they stream in, so the next question appears about 3 s after an update starts. After an hour the conversation is restarted with a summary of the panels. Each update counts against your Claude plan's usage limits; when the limit is reached, Assist pauses and retries while the recording continues. Only transcript text and the Aya context are sent to Claude, never audio. Details and measurements: [MEETINGASSIST_PLAN.md](MEETINGASSIST_PLAN.md).
 
@@ -84,22 +86,54 @@ A recording made with Assist has an *Assist Recap* button in Scribe, to do steps
 
 ## Push-to-talk dictation
 
-Hold the dictation shortcut in any app, speak, and let go. The text is transcribed locally with
-Parakeet Ultra (about 0.1–0.2 s for a 10 s clip), copied to the clipboard and pasted at the cursor.
+Hold a dictation shortcut in any app, speak, and let go. The text is transcribed locally with
+Parakeet Ultra (about 0.1–0.4 s for a 10 s clip) and pasted at the cursor.
 
-- Choose the shortcut in **Settings › Dictation**. It can be a combination such as ⌃⌥Space or modifier
-  keys only, such as right ⌥ (the default) or fn + left ⌃. With modifier-only shortcuts, typing another key
-  while holding them cancels the dictation, so ⌥ shortcuts such as ⌥L for @ keep working.
-- Pasting into other apps and detecting modifier-only shortcuts both need **Accessibility** permission.
-  Grant it from the Dictation tab. Without it, a key combination still works, but the text is only copied.
-- Taps shorter than 0.3 s are ignored.
+- **Two modes.** *Word for word* (right ⌥ by default) runs entirely on the Mac. *Scribe+* (right ⌥ + right ⌘)
+  also has Claude turn the speech into clean written text: misheard words, filler words and false starts are fixed,
+  self-corrections are applied ("Montag, nein Dienstag" → "Dienstag"), punctuation is fixed, and the tone follows the
+  text around the cursor. Adding ⌘ while a plain dictation runs switches it to Scribe+. Scribe+ uses the local Claude
+  Code login (your subscription) with Sonnet (2–4 s, the default) or Haiku (about 1 s, changes words more often). With
+  *Keep Claude ready* a `claude` process waits in the background, which saves about 3 s. If Claude fails, takes longer
+  than 8 s, or its answer is not an edit of what was said (a reply, a refusal), the word-for-word text is pasted
+  instead. Each dictation's timings are written to the system log (`log show --last 1h --predicate
+  'subsystem == "de.local.MeetingScribe" AND category == "Dictation"'`).
+- **Context for Scribe+.** With *Use the text around the cursor as context*, Scribe+ also sends Claude the app's name
+  and up to 1,200 characters before and 300 after the cursor. Without it, only the dictated text (and matching
+  vocabulary) is sent.
+- **Fits where you type.** Spaces and capitals follow the text around the cursor (also mid-sentence), and a final
+  period is dropped when the sentence goes on. Password fields are never read.
+- **Clipboard.** The text stays on the clipboard after pasting. If you click into another field before it arrives,
+  it is only copied, not pasted.
+- **Nothing gets lost.** The recording is kept until its text has arrived. If transcription fails, it stays for 24 hours
+  under *Unfinished Dictations* in the menu-bar menu and can be transcribed again. The retry cleans up the text like a
+  normal dictation (Scribe+ again for a Scribe+ dictation, without the text around the cursor) and copies it to the
+  clipboard; it is not pasted. *Copy Last Dictation* is there too.
+- **No invented text.** A shortcut pressed by accident, a cough or a click gives no "Thank you." or "Moment.": taps
+  shorter than 0.3 s are ignored silently, and presses shorter than 3 s without at least 0.15 s of continuous voice
+  show "No speech detected" before the model runs, and known subtitle credits
+  ("Untertitel im Auftrag des ZDF") never come through, in dictations or transcripts.
+- **Spoken forms.** "ähm" and "äh" are dropped, "16 Uhr 45" becomes "16:45 Uhr", and "max punkt mustermann at
+  beispiel punkt de" becomes an e-mail address.
+- Music or a podcast is muted while you speak (not during a recording) and comes back right after.
+- Pasting, reading the text around the cursor and modifier-only shortcuts need **Accessibility** permission
+  (Settings › Dictation). Without it, the text is only copied.
+
+## Vocabulary
+
+Settings › Vocabulary holds names and terms spelled your way. They apply to dictations and to final transcripts:
+the same letters ("hubspot", "Hub Spot" → "HubSpot") and, optionally, words that sound very much alike
+("Clawd" → "Claude", "Musterman" → "Mustermann"). A correctly spelled German or English word is never turned into a
+name, so a contact called Klein does not capitalize every "klein". Replacements are fixed rules
+("n acht n" → "n8n"). With Aya connected, company names (without GmbH, AG …), contacts, team members and short
+project names are added automatically and refreshed twice a day.
 
 ## How it works
 
 | Stage | Model / API | Runs on |
 |---|---|---|
 | Call audio capture | Core Audio process tap (macOS 14.2+), own process excluded, follows output-device changes | – |
-| Mic capture | AVAudioEngine, any input device | – |
+| Mic capture | Core Audio HAL input unit, any input device | – |
 | Speech detection | Silero VAD | Neural Engine |
 | Transcription (default) | NVIDIA Parakeet TDT 0.6B "Ultra", 25 European languages | Neural Engine |
 | Transcription (optional) | Qwen3-ASR 1.7B + Qwen3 forced aligner, 30 languages | GPU (MLX) |
@@ -108,7 +142,7 @@ Parakeet Ultra (about 0.1–0.2 s for a 10 s clip), copied to the clipboard and 
 
 Libraries: [FluidAudio](https://github.com/FluidInference/FluidAudio) (Parakeet, Nemotron 3, Silero, CAM++) and [speech-swift](https://github.com/soniqo/speech-swift) (Qwen3-ASR).
 
-Pipeline per recording: VAD → chunks of up to 14 s → ASR with word timestamps → Nemotron 3 on the tracks that need it → speaker embeddings → clusters merged when nearly identical or above the participant count → "Me" by track (Call) or voiceprint (In person/Hybrid) → words assigned to speakers → echo of the call removed from the mic track → turns.
+Pipeline per recording: VAD → chunks of up to 14 s → ASR with word timestamps → Nemotron 3 on the tracks that need it → speaker embeddings → clusters merged when nearly identical or above the participant count → "Me" by voiceprint (in Call mode, without a match, the main voice on the mic) → words assigned to speakers → echo of the call removed from the mic track → turns.
 
 Live mode cuts each track into utterances with Silero VAD, transcribes each with Parakeet (≈150× faster than real time), and labels speakers with streaming Nemotron 3 about 3 s behind.
 
@@ -146,14 +180,24 @@ Caveat: the meeting test uses synthetic voices. Real meetings with crosstalk and
 
 ## Command-line tool
 
+`msctl` without arguments prints all commands.
+
 ```bash
+.build/release/msctl devices | perm                     # input devices, microphone permission
+.build/release/msctl record 30 call [--mute]            # record a test session
 .build/release/msctl import mic.wav system.wav call     # -> session id
 .build/release/msctl transcribe <id> [parakeet|qwen] [auto|german|english]
-.build/release/msctl export <id> md
+.build/release/msctl enroll voice.wav [name]            # your voiceprint
+.build/release/msctl export <id> md|txt|srt|json
 .build/release/msctl livetest mic.wav system.wav call   # simulate live mode at 4x speed
 .build/release/msctl taptest 5 --mute                   # check system-audio capture
+.build/release/msctl mictest 5 [default]                # check the mic the live listener uses
 .build/release/msctl trim <id> <start> <end>            # keep only start..end (seconds)
 .build/release/msctl split <id> <seconds>               # split into two recordings
+.build/release/msctl asr parakeet|qwen auto|german|english <files...>   # plain ASR, one line per file
+.build/release/msctl memtest <audio>                    # GPU memory with Qwen3 loaded and unloaded
+.build/release/msctl dictate <audio> [seconds] [--plus] [--before "text"] [--app Mail] [--model sonnet|haiku] [--warm 2.5]   # dictation path with timings
+.build/release/msctl vocab <id>                         # what the vocabulary would change in a transcript
 ```
 
 Assist and Aya (`AYA_API_KEY` overrides the Keychain):
@@ -164,13 +208,17 @@ Assist and Aya (`AYA_API_KEY` overrides the Keychain):
 .build/release/msctl aya upcoming [days]                  # planned meetings
 .build/release/msctl aya context [--meeting id] [--client id] [--project id] [--template id]   # what Claude is told
 .build/release/msctl assist check                       # Claude Code installed and logged in?
-.build/release/msctl assist replay <id> [--meeting|--client|--project|--template <id>] [--speed 4] [--minutes 5] [--save file]
-.build/release/msctl assist live <id> --client <clientId> [--minutes 3]   # real audio → live transcriber → Claude
+.build/release/msctl assist replay <id> [--meeting|--client|--project|--template <id>] [--speed 4] [--minutes 5] [--model opus|sonnet|haiku] [--save file]
+.build/release/msctl assist live <id> [--meeting|--client|--project|--template <id>] [--minutes 3]   # real audio → live transcriber → Claude
 .build/release/msctl assist recap|crm <id> [--record file] # draft the recap / CRM proposal (prints only)
 .build/release/msctl assist tables <id> [--record file]    # complete the template's tables from the transcript
 ```
 
 Set `MEETINGASSISTANT_HOME=/some/dir` to keep test data out of the app's storage.
+
+## Privacy
+
+What leaves the Mac, and when: [docs/privacy.md](docs/privacy.md). Reporting a security problem: [SECURITY.md](SECURITY.md).
 
 ## Known limitations
 

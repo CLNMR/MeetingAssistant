@@ -12,7 +12,7 @@ struct RecorderView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     recordingHeader
                     if state.prefs.liveTranscription {
-                        LiveTranscriptView(lines: state.liveLines, mode: state.recordingMode)
+                        LiveTranscriptView(lines: state.liveLines, mode: state.recordingMode, myName: state.prefs.myName)
                     } else {
                         Spacer()
                     }
@@ -167,12 +167,13 @@ struct RecorderView: View {
 struct LiveTranscriptView: View {
     let lines: [LiveLine]
     let mode: MeetingMode
+    var myName = "Me"
 
     /// Live speaker ids ("system-2") become friendly labels in order of first appearance.
     private var labels: [String: String] {
-        var map: [String: String] = ["me": "Me"]
-        var n = 0
-        for l in lines { if let s = l.speaker, map[s] == nil { n += 1; map[s] = mode == .call && s.hasPrefix("system") ? "Remote \(n)" : "Speaker \(n)" } }
+        var namer = LiveSpeakerLabels(mode: mode, myName: myName)
+        var map: [String: String] = ["me": namer.label(for: "me")]
+        for l in lines { if let s = l.speaker, map[s] == nil { map[s] = namer.label(for: s) } }
         return map
     }
 

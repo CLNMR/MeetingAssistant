@@ -12,6 +12,7 @@ struct HotKey: Codable, Equatable {
     var modifierKeys: [UInt16]? = nil
 
     static let rightOption = HotKey(keyCode: UInt16(kVK_RightOption), modifiers: 0, modifierOnly: true)
+    static let rightOptionCommand = HotKey.modifiers([UInt16(kVK_RightOption), UInt16(kVK_RightCommand)])
 
     static let allModifierKeys: [UInt16] = [kVK_Function, kVK_Control, kVK_RightControl, kVK_Option, kVK_RightOption,
                                             kVK_Shift, kVK_RightShift, kVK_Command, kVK_RightCommand].map { UInt16($0) }
@@ -131,6 +132,14 @@ final class GlobalHotKey {
     private var handler: EventHandlerRef?
     private var monitors: [Any] = []
     private var isDown = false
+    /// Each instance registers its own Carbon hot key id; all handlers see every hot key event.
+    private static var nextID: UInt32 = 1
+    private let carbonID: UInt32
+
+    init() {
+        carbonID = Self.nextID
+        Self.nextID += 1
+    }
 
     func register(_ key: HotKey?) {
         unregister()
@@ -158,6 +167,10 @@ final class GlobalHotKey {
         InstallEventHandler(GetApplicationEventTarget(), { _, event, user in
             guard let event, let user else { return OSStatus(eventNotHandledErr) }
             let hk = Unmanaged<GlobalHotKey>.fromOpaque(user).takeUnretainedValue()
+            var hkID = EventHotKeyID()
+            GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), nil,
+                              MemoryLayout<EventHotKeyID>.size, nil, &hkID)
+            guard hkID.id == hk.carbonID else { return OSStatus(eventNotHandledErr) }
             let pressed = GetEventKind(event) == UInt32(kEventHotKeyPressed)
             MainActor.assumeIsolated { pressed ? hk.down() : hk.up() }
             return noErr
@@ -168,7 +181,7 @@ final class GlobalHotKey {
         if key.flags.contains(.option) { mods |= UInt32(optionKey) }
         if key.flags.contains(.control) { mods |= UInt32(controlKey) }
         if key.flags.contains(.shift) { mods |= UInt32(shiftKey) }
-        let id = EventHotKeyID(signature: OSType(0x4D534354), id: 1)   // 'MSCT'
+        let id = EventHotKeyID(signature: OSType(0x4D534354), id: carbonID)   // 'MSCT'
         let st = RegisterEventHotKey(UInt32(key.keyCode), mods, id, GetApplicationEventTarget(), 0, &ref)
         registrationError = st == noErr ? nil : "\(key.display) is already used by another app. Choose a different shortcut."
     }

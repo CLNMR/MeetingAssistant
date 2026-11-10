@@ -19,26 +19,25 @@ public final class SessionRecorder: @unchecked Sendable {
     public init(mode: MeetingMode, title: String? = nil, expectedSpeakers: Int? = nil, language: String? = nil) throws {
         try AppPaths.ensure()
         let start = Date()
-        let fmt = DateFormatter(); fmt.dateFormat = "yyyy-MM-dd_HH-mm-ss"
-        let id = fmt.string(from: start)
+        // Unique even when two recordings start in the same second ("…_2").
+        let id = try SessionStore.createSessionFolder(base: SessionStore.folderName(for: start))
         let tracks: [Track] = mode.recordsSystemAudio ? [.mic, .system] : [.mic]
         let df = DateFormatter(); df.dateStyle = .medium; df.timeStyle = .short
         info = SessionInfo(id: id, title: title ?? "Meeting \(df.string(from: start))", startedAt: start,
                            durationSec: 0, mode: mode, tracks: tracks, expectedSpeakers: expectedSpeakers,
                            language: language, status: .recording)
-        try FileManager.default.createDirectory(at: AppPaths.session(id), withIntermediateDirectories: true)
         startHostTime = mach_absolute_time()
     }
 
     public func start(inputDeviceID: AudioObjectID?, muteSystemAudio: Bool = false) throws {
         try JSONIO.write(info, to: AppPaths.info(info.id))
-        let mw = try TrackWriter(url: AppPaths.track(info.id, .mic), sessionStartHostTime: startHostTime)
+        let mw = try TrackWriter(url: AppPaths.newTrack(info.id, .mic), sessionStartHostTime: startHostTime)
         mw.onSamples = onMicSamples
         micWriter = mw
         try mic.start(deviceID: inputDeviceID) { buf, time in mw.append(buf, time: time) }
 
         if info.mode.recordsSystemAudio {
-            let sw = try TrackWriter(url: AppPaths.track(info.id, .system), sessionStartHostTime: startHostTime)
+            let sw = try TrackWriter(url: AppPaths.newTrack(info.id, .system), sessionStartHostTime: startHostTime)
             sw.onSamples = onSystemSamples
             systemWriter = sw
             tap.muted = muteSystemAudio

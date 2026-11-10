@@ -36,9 +36,8 @@ public enum TranscriptionPipeline {
         // Which tracks need diarization in this mode.
         func diarize(_ t: Track) -> Bool {
             switch mode {
-            case .call: return t == .system
+            case .call, .hybrid: return true      // in a call, people next to the user share the mic
             case .inPerson: return t == .mic
-            case .hybrid: return true
             }
         }
 
@@ -63,17 +62,20 @@ public enum TranscriptionPipeline {
             var words: [Word] = []
             for (ci, c) in chunks.enumerated() {
                 try Task.checkCancellation()
-                progress?(base + span * (0.05 + 0.75 * Double(ci) / Double(max(1, chunks.count))),
-                          "Transcribing \(name) (\(ci + 1)/\(chunks.count))")
+                let at = base + span * (0.05 + 0.75 * Double(ci) / Double(max(1, chunks.count)))
+                let step = "\(name) (\(ci + 1)/\(chunks.count))"
+                progress?(at, "Transcribing \(step)")
                 words += try await store.transcribe(AudioIO.slice(samples, c.start, c.end), offset: c.start,
-                                                    engine: settings.engine, language: language)
+                                                    engine: settings.engine, language: language,
+                                                    onLanguageCheck: { msg in progress?(at, "\(msg) · \(step)") })
             }
 
             var segments: [(speaker: String, span: TimeSpan)]? = nil
             if diarize(track), !words.isEmpty {
                 progress?(base + span * 0.82, "Identifying speakers in \(name)")
                 let diar = try await store.diarize(samples, speech: regions)
-                segments = diar.map { ("\(track.rawValue)-\($0.speaker)", $0.span) }
+                // No segments at all: the whole track is one speaker ("<track>-0", see below).
+                if !diar.isEmpty { segments = diar.map { ("\(track.rawValue)-\($0.speaker)", $0.span) } }
                 // Speaker embeddings from each speaker's non-overlapping speech.
                 let ids = Set(diar.map(\.speaker))
                 for id in ids.sorted() {
@@ -91,15 +93,16 @@ public enum TranscriptionPipeline {
                     if audio.count >= 16_000 { centroids[key] = try await store.embedding(audio) }
                 }
             }
-            let fixed: String? = (track == .mic && mode == .call) ? "me" : (segments == nil ? "\(track.rawValue)-0" : nil)
-            results.append(TrackResult(track: track, words: words, segments: segments, fixedSpeaker: fixed))
+            // Words of a track without diarized segments belong to "<track>-0", never "unknown".
+            results.append(TrackResult(track: track, words: words, segments: segments, fixedSpeaker: "\(track.rawValue)-0"))
             progress?(base + span, "Finished \(name)")
         }
 
         // Merge clusters: Nemotron sometimes splits one voice over two slots, and the user
-        // may have told us how many people took part.
+        // may have told us how many people took part (counted over all tracks). Only clusters
+        // of the same track are merged: a voice at the mic and one on the call audio are
+        // different people.
         var expected: Int? = info.expectedSpeakers
-        if let e = expected, mode == .call { expected = max(1, e - 1) }    // the mic is "me"
         if mode == .hybrid { expected = nil }
         let mapping = SpeakerMath.mergeClusters(centroids, weights: speechSeconds, target: expected,
                                                 autoMergeAbove: settings.autoMergeThreshold)
@@ -120,15 +123,23 @@ public enum TranscriptionPipeline {
         let finalCentroids = merged.mapValues { SpeakerMath.mean($0) }
 
         // Who is "me"?
-        var meID: String? = mode == .call ? "me" : nil
-        if meID == nil, let vp = VoiceprintStore.load() {
+        var meID: String?
+        if let vp = VoiceprintStore.load() {
             let candidates = finalCentroids.filter { $0.key.hasPrefix("mic-") }.map { ($0.key, $0.value) }
             meID = SpeakerMatch.best(for: vp.embedding, among: candidates,
                                      threshold: settings.meThreshold, margin: settings.matchMargin,
                                      reference: Array(finalCentroids.values))
         }
 
-        let turns = Merger.turns(tagged)
+        // In a call the user is at the mic: without a voiceprint match, the mic's main voice.
+        if meID == nil, mode == .call {
+            var counts: [String: Int] = [:]
+            for (_, id, t) in tagged where t == .mic { counts[id, default: 0] += 1 }
+            meID = counts.max { $0.value < $1.value }?.key
+        }
+
+        var turns = Merger.turns(tagged)
+        turns = Self.cleaned(turns, vocabulary: Vocabulary.load())
         // Labels in order of first appearance; known voices get their names.
         let library = SpeakerLibrary.load()
         var speakers: [Speaker] = []
@@ -158,5 +169,21 @@ public enum TranscriptionPipeline {
         try JSONIO.write(transcript, to: AppPaths.transcript(sessionID))
         progress?(1, "Done")
         return transcript
+    }
+
+    /// Drops turns that are only a subtitle credit the model invented, and spells names and
+    /// terms the user's way.
+    public static func cleaned(_ turns: [Turn], vocabulary: Vocabulary) -> [Turn] {
+        let matcher = vocabulary.isEmpty ? nil : vocabulary.matcher()
+        var out: [Turn] = []
+        for var t in turns where !InventedText.isCredit(t.text) {
+            if let matcher {
+                let words = matcher.apply(t.words)
+                if words != t.words { t.words = words; t.text = words.map(\.w).joined(separator: " ") }
+            }
+            t.id = out.count
+            out.append(t)
+        }
+        return out
     }
 }

@@ -25,6 +25,22 @@ public enum AudioIO {
         return out
     }
 
+    /// Writes 16 kHz mono samples as a Float32 CAF file.
+    public static func writeCAF(_ samples: [Float], to url: URL) throws {
+        let fmt = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)!
+        let file = try AVAudioFile(forWriting: url, settings: fmt.settings, commonFormat: .pcmFormatFloat32, interleaved: false)
+        let block = 16_000 * 30
+        var i = 0
+        while i < samples.count {
+            let n = min(block, samples.count - i)
+            guard let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: AVAudioFrameCount(n)) else { break }
+            buf.frameLength = AVAudioFrameCount(n)
+            samples.withUnsafeBufferPointer { src in buf.floatChannelData![0].update(from: src.baseAddress! + i, count: n) }
+            try file.write(from: buf)
+            i += n
+        }
+    }
+
     public static func slice(_ s: [Float], _ start: Double, _ end: Double) -> [Float] {
         let a = max(0, min(s.count, Int(start * 16_000)))
         let b = max(a, min(s.count, Int(end * 16_000)))

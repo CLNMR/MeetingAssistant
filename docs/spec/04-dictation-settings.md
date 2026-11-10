@@ -68,13 +68,13 @@ On release (only if phase is `listening`):
 5. **Accidental press filter:** if `held < 3.0 s` **and** `voiced < 0.15 s` → close Claude session, toast `No speech detected`. Done (no ASR, no recovery file).
 6. Run `finish(samples, voiced, mode)`:
 
-   a. **Save for recovery**: write the samples to `Dictations/dictation-<unix-ms>.caf` (section 1.8). Keep the path.
+   a. **Save for recovery**: write the samples to `Dictations/dictation-<unix-ms>.caf`, or `dictation-<unix-ms>-plus.caf` when the mode is plus (section 1.8). Keep the path.
    b. Start a 5-second timer: if still transcribing with detail `Transcribing…` after 5 s, change the detail to `Preparing the speech model… (the first dictation after a macOS update can take a few minutes)` (on Mac, the Core ML model is recompiled after OS updates).
    c. Start ASR off the UI thread (section 1.5).
    d. **In parallel**, read the focused field: with text (before/after cursor) if *Fit spaces and capitals* **or** *Use the text around the cursor as context* is on; otherwise only identity (app, element). (Section 3.2.)
    e. Await ASR. On error: close Claude session, refresh the unfinished list, toast `Transcription failed – the recording is kept in the menu bar menu` (or `Transcription failed` if saving had failed). The audio file stays. Done.
-   f. If the raw text is empty or **invented** (section 4.1 `isInvented(raw, voiced)`): delete the recovery file, close Claude session, toast `No speech detected`. Done.
-   g. **Clean-up**: `text = SpokenForms.apply(vocabularyMatcher.apply(raw))` — vocabulary first, then spoken forms (sections 5 and 4.3).
+   f. **Text processing** (shared with the retry in 1.8): if the raw text is empty or **invented** (section 4.1 `isInvented(raw, voiced)`): delete the recovery file, close Claude session, toast `No speech detected`. Done.
+   g. Otherwise **clean-up**: `text = SpokenForms.apply(vocabularyMatcher.apply(raw))` — vocabulary first, then spoken forms (sections 5 and 4.3).
    h. If mode is plus: Scribe+ rewrite (section 2), which returns either the rewritten text or the plain text plus a note explaining why.
    i. If *Fit spaces and capitals* is on and the field's `before` text is known: `text = InsertionFit.fit(text, before, after ?? "")` (section 3.3).
    j. Deliver (section 3.1). After a successful hand-off to paste/copy, delete the recovery file.
@@ -119,10 +119,10 @@ On release (only if phase is `listening`):
 - There is **no persistent dictation history**. Only:
   - `lastText` (in memory, lost on quit): the last delivered text; menu-bar item `Copy Last Dictation` copies it to the clipboard.
   - **Recovery files**: audio saved before transcription so a failure or crash loses nothing.
-- Recovery folder `<AppData>/Dictations/`, excluded from backups (Time Machine). File name `dictation-<milliseconds since 1970>.caf` (16 kHz mono float32 CAF). The timestamp in the name is the recording date.
+- Recovery folder `<AppData>/Dictations/`, excluded from backups (Time Machine). File name `dictation-<milliseconds since 1970>.caf`, with the suffix `-plus` (`dictation-<ms>-plus.caf`) for a Scribe+ dictation (16 kHz mono float32 CAF). The timestamp in the name is the recording date; parsing takes the number before the first `-` after `dictation-`, so older files without a suffix read as plain.
 - Deleted when: the text was delivered; ASR returned empty/invented text; the user deletes it; or it is older than **24 h** (pruned whenever the list is read: at launch, when the menu opens, after a failure).
 - Menu bar: `Unfinished Dictations (N)` → per item, label `<time> · <m:ss>` (date added if not today) → `Transcribe Again and Copy` / `Delete`.
-- *Transcribe Again and Copy*: HUD shows `Transcribing the kept dictation…`; ASR → vocabulary → spoken forms (**no** invented-text check, **no** Scribe+, **no** fit) → **copied only** (never pasted), `lastText` set, file deleted, toast `Copied – paste with ⌘V`. Empty result → file deleted, toast `No speech in that recording`. Error → toast `Transcription failed again` (file kept).
+- *Transcribe Again and Copy* (ignored while a dictation is listening or transcribing): HUD shows `Transcribing the kept dictation…`; ASR → the same text processing as a normal dictation: invented-text check (voiced run computed from the kept audio) → vocabulary → spoken forms → for a `-plus` file Scribe+ (section 2) **without** app name or cursor context (the original field is gone; Claude must be available, else the 2.6 fallback). **No** fit. The result is **copied only** (never pasted: the cursor is no longer where the dictation started), `lastText` set, file deleted. Toast `Copied (not pasted) – paste with ⌘V`; if Scribe+ fell back, the 2.6 note with "pasted" replaced by "copied" plus `. Paste with ⌘V.` (e.g. `Scribe+ failed – copied word for word. Paste with ⌘V.`). Empty or invented result → file deleted, toast `No speech in that recording`. ASR error → toast `Transcription failed again` (file kept).
 
 **Windows notes:** store under `%LOCALAPPDATA%\MeetingAssistant\Dictations\` (Local, not Roaming, so it is not synced). WAV (float32 or PCM16) is an acceptable replacement for CAF if both platforms need not exchange files; keep the name pattern.
 
@@ -145,8 +145,7 @@ On release (only if phase is `listening`):
 
 - Transport: the **locally installed Claude Code CLI** (`claude`), using the user's Claude subscription login. No API key is used; API-key environment variables are removed from the child process (section 2.4).
 - Sent per dictation (one user message):
-  - `APP: <localized name of the frontmost app>` — always when known (even with the context toggle off; see "Inconsistencies").
-  - With *Use the text around the cursor as context* (default **on**) and a non-password field: up to the **last 1,200 characters before** and **first 300 characters after** the cursor.
+  - Only with *Use the text around the cursor as context* (default **on**): `APP: <localized name of the frontmost app>` when known, and, for a non-password field, up to the **last 1,200 characters before** and **first 300 characters after** the cursor. With the option off, none of these are sent.
   - `VOCABULARY:` — the user's own terms plus the Aya terms relevant to this dictation, max 80 (2.2).
   - The dictation text (after vocabulary + spoken forms).
 - Never read: password/secure fields (role/subrole check). Nothing is sent in plain mode.
@@ -170,7 +169,7 @@ Rules:
 - Output only the edited text: no markers, quotes, notes or explanations.
 ```
 
-User message, built in this order (each part only if non-empty after trimming whitespace):
+User message, built in this order (each part only if non-empty after trimming whitespace; `APP` and both `CONTEXT` parts only with the context option):
 
 ```
 APP: <app name>
@@ -247,7 +246,7 @@ On the answer, in this order:
 
 While waiting the HUD detail is `Writing with Claude…`. Fit (3.3) is applied after Scribe+ either way.
 
-**Mac implementation:** `ScribePlus` (prompt, checks) in `Sources/MeetingAssistantCore/Text/ScribePlus.swift`; `ScribePlusSession` (one process, 8 s timeout) in `Text/ScribePlusSession.swift`; `ClaudeCLI` / `ClaudeStream` in `Sources/MeetingAssistantCore/Assist/ClaudeCLI.swift`; spare handling in `DictationController.updateSpare/startPlusSession/rewrite`.
+**Mac implementation:** `ScribePlus` (prompt, checks; `ScribePlus.prompt(…, useContext:, …)` drops app and cursor text when the option is off) in `Sources/MeetingAssistantCore/Text/ScribePlus.swift`; `ScribePlusSession` (one process, 8 s timeout) in `Text/ScribePlusSession.swift`; `ClaudeCLI` / `ClaudeStream` in `Sources/MeetingAssistantCore/Assist/ClaudeCLI.swift`; spare handling in `DictationController.updateSpare/startPlusSession/rewrite`.
 **Windows notes:** `claude` on Windows is `claude.exe` (native installer, `%USERPROFILE%\.local\bin\claude.exe`) or an npm shim `%APPDATA%\npm\claude.cmd` (a `.cmd` must be started via `cmd.exe /c` or resolved to the underlying node script). Use `System.Diagnostics.Process` with redirected stdin/stdout/stderr and UTF-8 encodings; write the JSON line + `\n` and flush. Remove the same environment variables. The `--mcp-config` JSON argument needs careful quoting on Windows (`ProcessStartInfo.ArgumentList` avoids manual escaping).
 
 ---
@@ -545,7 +544,7 @@ The app has no server, no account, no telemetry.
 | Audio of recordings and dictations | Nowhere (on-device ASR, diarization, embeddings) | Never |
 | Speech models | Downloaded from Hugging Face | *Download Models* |
 | Live transcript text + Aya meeting context | Anthropic via local Claude Code login | Assist mode only (live, recap, tables, CRM proposals) |
-| Dictation text | Anthropic via Claude Code | Scribe+ only; with context option also ≤ 1,200 chars before / 300 after the cursor and the app name; never password fields |
+| Dictation text (+ matching vocabulary terms) | Anthropic via Claude Code | Scribe+ only; only with the context option also the app name and ≤ 1,200 chars before / 300 after the cursor (never password fields) |
 | Last 2–10 min of transcript | Anthropic via Claude Code | *What did I miss?* |
 | Recaps, tables, CRM changes | The user's Aya organization (`api.hey-aya.ai`) | Only on *Save* / *Apply* |
 | Aya lists (companies, contacts, projects, templates, meetings, members) | Read from Aya, cached locally | Assist mode and vocabulary refresh |
@@ -565,7 +564,7 @@ A companion CLI for testing capture and the pipeline without the GUI; it shares 
 | `devices` | List input devices: `id \t name \t uid` |
 | `perm` | Print microphone permission state |
 | `taptest <seconds> [--mute]` | Run the system-audio tap, print level/duration each second, write `<AppData>/taptest.caf` |
-| `mictest <seconds> [default]` | Capture the mic the live listener would use (non-Bluetooth input unless `default`), print frame count |
+| `mictest [seconds] [default]` | Capture the mic the live listener would use (non-Bluetooth input unless `default`), print frame count |
 | `record <seconds> [call\|inPerson\|hybrid] [--mute]` | Record a session (default `call`), print levels each second, print path and duration |
 | `import <mic.wav> [system.wav] [call\|inPerson\|hybrid] [--speakers N]` | Create a session from files (mode default: call if two files, else inPerson); prints session id |
 | `transcribe <session-id> [qwen\|parakeet] [auto\|german\|english]` | Run the final pipeline with progress, print plain-text transcript and processing time (engine default from `PipelineSettings`, `parakeet` selects Parakeet) |
@@ -576,11 +575,11 @@ A companion CLI for testing capture and the pipeline without the GUI; it shares 
 | `export <session-id> md\|txt\|srt\|json` | Print an export |
 | `trim <session-id> <start> <end>` / `split <session-id> <seconds>` | Edit a recording |
 | `livetest <mic.wav> [system.wav] [mode]` | Feed files to the live transcriber at 4× speed (100 ms every 25 ms), print status every 10 s of audio and the final lines |
-| `memtest <wav>` | Memory footprint with Qwen3 loaded and after unloading |
+| `memtest <audio>` | Memory footprint with Qwen3 loaded and after unloading |
 | `aya setup <orgId> \| config \| workspaces \| specs <ws> \| schema <slot> \| list <slot> \| search <slot> <text> \| upcoming [days] \| context [--meeting\|--client\|--project\|--template id]` | Aya connection (API key from `AYA_API_KEY` or the keychain) |
 | `assist check \| replay … \| live … \| tables … \| recap … \| crm …` | Assist engine and recaps (see Assist section) |
 
-Unknown command → usage text, exit code 2. `aya`/`assist` errors print `error: …` to stderr, exit 1.
+Unknown command or no arguments → usage text listing every command above (grouped: capture, sessions, speech models, dictation and vocabulary, Aya and Assist, with the same `assist replay` options as the README: `[--meeting|--client|--project|--template <id>] [--speed N] [--minutes M] [--model …] [--save file]`), exit code 2. `aya`/`assist` errors print `error: …` to stderr, exit 1.
 
 **Windows notes:** ship as `msctl.exe` (a .NET console app referencing the same core library). `taptest`/`mictest`/`devices` map to WASAPI loopback/capture and `MMDeviceEnumerator`. Keep command names and output formats identical so scripts and comparisons work on both platforms.
 
@@ -622,12 +621,8 @@ On push to `main` and on pull requests; `macos-15` runner, 45-minute timeout: se
 
 **Windows notes:** a `windows-latest` job running `dotnet build` + `dotnet test` with the same secret grep; models are not downloaded in CI.
 
-### 10. Inconsistencies and open points (Mac code as of this spec)
+### 10. Intended differences and notes for the port
 
-- **App name is sent even with context off.** `ScribePlus.prompt` receives `field?.app` regardless of *Use the text around the cursor as context*; the settings caption and privacy doc imply the app name is only sent with that option. Decide and align both platforms.
-- **Accidental-press thresholds**: taps < 0.3 s are dropped silently; < 3 s with no voiced run ≥ 0.15 s show `No speech detected`. README says only "Taps shorter than 0.3 s are ignored".
-- **Retry of unfinished dictations** skips the invented-text check, Scribe+ and fit, and only copies.
-- **No toggle mode, no spoken punctuation commands, no persistent dictation history** — if the Windows brief expects these, they are new features, not ports.
-- **msctl usage text** lists only part of the commands (`dictate`, `vocab`, `asr`, `livetest`, `memtest`, `mictest` are missing; the header comment mentions only `record`/`devices`), and the `assist replay` options in the CLI usage (`--playbook`) differ from the README (`--meeting|--client|--project|--template`).
-- **Logger subsystem / defaults domain / bundle id** still use the old name `de.local.MeetingScribe`; intentional for migration, but the Windows port should pick its own stable identifiers once and never change them.
-- Toast texts hard-code `⌘V`; the Windows port needs `Ctrl+V`.
+- **No toggle mode, no spoken punctuation commands, no persistent dictation history.** Not bugs; if the Windows brief expects these, they are new features, not ports.
+- **Identifiers keep the old name** `de.local.MeetingScribe` (Logger subsystem, defaults domain, bundle id) on purpose, for migration. The Windows port should pick its own stable identifiers once and never change them.
+- **Toast texts say `⌘V`** on the Mac; the Windows port uses `Ctrl+V`.

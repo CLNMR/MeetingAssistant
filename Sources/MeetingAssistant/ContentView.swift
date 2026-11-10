@@ -109,11 +109,11 @@ struct AyaRail: View {
 private struct RailLogo: View {
     @ObservedObject var assist: AssistController
     var body: some View {
-        if let url = assist.orgURL {
+        if let url = assist.logoURL {
             Link(destination: url) { AyaLogoTile(size: 32) }
                 .buttonStyle(.plain)
                 .pointerStyle(.link)
-                .help("Open your organization in Aya")
+                .help(assist.ayaURL(.meetings) != nil ? "Open the meetings in Aya" : "Open Aya")
         } else {
             AyaLogoTile(size: 32).help("Aya is not connected yet. Connect it in Settings › Assist.")
         }
@@ -125,6 +125,7 @@ private struct RailLogo: View {
 struct RecordingsPanel: View {
     @EnvironmentObject var state: AppState
     @State private var filter = ""
+    @State private var pendingDelete: SessionInfo?
     @FocusState private var listFocused: Bool
 
     private var items: [SessionInfo] {
@@ -155,7 +156,8 @@ struct RecordingsPanel: View {
                                     Button("Transcribe Again") { state.enqueue(s.id) }
                                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([AppPaths.session(s.id)]) }
                                     Divider()
-                                    Button("Delete", role: .destructive) { state.delete(s.id) }
+                                    Button("Delete…", role: .destructive) { pendingDelete = s }
+                                        .disabled([.recording, .queued, .transcribing].contains(s.status))
                                 }
                         }
                         if items.isEmpty {
@@ -175,6 +177,14 @@ struct RecordingsPanel: View {
         .padding(14)
         .frame(maxHeight: .infinity, alignment: .top)
         .ayaSurface()
+        .confirmationDialog("Delete “\(pendingDelete?.title ?? "")”?",
+                            isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
+                            titleVisibility: .visible, presenting: pendingDelete) { s in
+            Button("Delete", role: .destructive) { state.delete(s.id) }
+        } message: { s in
+            Text("The recording, the transcript and the notes on this Mac are deleted."
+                 + (state.assistSessionIDs.contains(s.id) ? " What was saved in Aya stays there." : ""))
+        }
     }
 
     private func move(_ d: Int, _ proxy: ScrollViewProxy) {

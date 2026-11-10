@@ -180,25 +180,15 @@ final class ListenController: ObservableObject {
     }
 
     private func rebuild() {
-        let me = state?.prefs.myName.isEmpty == false ? state!.prefs.myName : "Me"
+        let me = state?.prefs.myName ?? ""
         var out: [PanelParagraph] = []
         for (si, seg) in segments.enumerated() {
-            var labels: [String: String] = [:]
-            var n = 0
+            var labels = LiveSpeakerLabels(mode: seg.mode, myName: me)
             for l in seg.lines {
                 let date = seg.start.addingTimeInterval(l.start)
                 guard date >= hiddenBefore else { continue }
                 let key = l.speaker ?? "?"
-                let name: String
-                if key == "me" { name = me }
-                else if l.speaker == nil { name = "…" }
-                else {
-                    if labels[key] == nil {
-                        n += 1
-                        labels[key] = seg.mode == .call && key.hasPrefix("system") ? "Remote \(n)" : "Speaker \(n)"
-                    }
-                    name = labels[key]!
-                }
+                let name = l.speaker == nil ? "…" : labels.label(for: key)
                 let colorKey = "\(si)-\(key)"
                 if var last = out.last, last.speaker == name, last.colorKey == colorKey,
                    date.timeIntervalSince(last.date) < 120 {
