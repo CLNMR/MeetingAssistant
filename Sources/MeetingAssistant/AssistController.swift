@@ -73,6 +73,9 @@ final class AssistController: ObservableObject {
     @Published var dayMeetings: [AyaRecord] = []
     @Published var recapFields: [ProposedValue] = []
     @Published var recapState: StepState = .idle
+    /// The template's tables in the review: live values, completed from the final transcript, edited.
+    @Published var reviewTables: [TemplateTable] = []
+    @Published var tablesState: StepState = .idle
     @Published var crm: CRMProposal?
     @Published var crmState: StepState = .idle
     private var waitTask: Task<Void, Never>?
@@ -331,6 +334,9 @@ final class AssistController: ObservableObject {
     func suggestNow() { Task { await engine?.suggestNow() } }
     func setOpenPoint(_ id: String, _ s: AssistState.OpenPoint.Status) { Task { await engine?.setOpenPoint(id, s) } }
     func setPlaybook(_ id: String, _ s: PlaybookItem.Status) { Task { await engine?.setPlaybook(id, s) } }
+    func setTableCell(row: String, column: String, value: String) {
+        Task { await engine?.setTableCell(row: row, column: column, value: value) }
+    }
     func togglePause() {
         paused.toggle()
         let p = paused
@@ -367,6 +373,8 @@ final class AssistController: ObservableObject {
         recapState = rec.recapRecordID != nil ? .done("Saved in Aya.") : .idle
         dayMeetings = []
         targetRecord = nil
+        reviewTables = rec.tables ?? rec.state.tables ?? []
+        tablesState = rec.tables != nil ? .done(nil) : .idle
         targetMeetingID = rec.recapRecordID ?? rec.context.meetingID
         phase = .review(id)
         app.appMode = .assist
@@ -417,7 +425,12 @@ final class AssistController: ObservableObject {
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
             }
             guard !Task.isCancelled, recapFields.isEmpty else { return }
-            if record?.recapRecordID == nil { await draftRecap() } else { recapState = .done("Already uploaded to Aya. Draft again to change it.") }
+            if record?.recapRecordID == nil {
+                let needTables = record?.tables == nil && !reviewTables.isEmpty
+                async let recap: Void = draftRecap()
+                async let tables: Void = needTables ? completeTables() : ()
+                _ = await (recap, tables)
+            } else { recapState = .done("Already saved in Aya. Draft again to change it.") }
         }
     }
 
@@ -439,6 +452,41 @@ final class AssistController: ObservableObject {
         }
     }
 
+    /// Claude fills the template's tables from the final transcript (cells the user set stay).
+    func completeTables() async {
+        guard let id = reviewSessionID, var rec = record, !reviewTables.isEmpty else { return }
+        if claudeBinary == nil { await checkClaude() }
+        guard let b = claudeBinary else { tablesState = .failed(ClaudeCLI.CLIError.notInstalled.errorDescription!); return }
+        tablesState = .working("Claude is completing the tables…")
+        do {
+            let done = try await RecapBuilder.completeTables(binary: b, model: settings.model, record: rec, sessionID: id, tables: reviewTables)
+            reviewTables = done
+            rec.tables = done
+            try? rec.save(id)
+            record = rec
+            tablesState = .done(nil)
+        } catch {
+            tablesState = .failed(error.localizedDescription)
+        }
+    }
+
+    /// The user edits a table cell in the review.
+    func setReviewCell(row: String, column: String, value: String) {
+        let tid = String(row.split(separator: ".").first ?? "")
+        guard let t = reviewTables.firstIndex(where: { $0.id == tid }),
+              reviewTables[t].set(row: row, column: column, value: value, byUser: true) else { return }
+        guard let id = reviewSessionID, var rec = record else { return }
+        rec.tables = reviewTables
+        try? rec.save(id)
+        record = rec
+    }
+
+    /// Label of the meeting field the tables are saved to, nil when they are not saved.
+    var tablesFieldLabel: String? {
+        guard let s = schemas[AyaSlot.meetings.rawValue], let key = config.tablesField(in: s) else { return nil }
+        return s.field(key)?.label ?? key
+    }
+
     func uploadRecap() async {
         guard let id = reviewSessionID, var rec = record, let svc = service, let ref = config.list(.meetings),
               let schema = schemas[AyaSlot.meetings.rawValue] else { return }
@@ -450,12 +498,12 @@ final class AssistController: ObservableObject {
             if let target = targetMeetingID {
                 let current = try await svc.record(.meetings, id: target)
                 let values = RecapBuilder.recapValues(recapFields, record: rec, sessionID: id, startedAt: started, schema: schema,
-                                                      config: config, existing: current, memberIDs: memberIDs)
+                                                      config: config, existing: current, memberIDs: memberIDs, tables: reviewTables)
                 targetRecord = try await svc.client.update(workspace: ref.workspaceId, list: ref.techName, id: target, values: values)
                 rec.recapRecordID = target
             } else {
                 let values = RecapBuilder.recapValues(recapFields, record: rec, sessionID: id, startedAt: started, schema: schema,
-                                                      config: config, memberIDs: memberIDs)
+                                                      config: config, memberIDs: memberIDs, tables: reviewTables)
                 let created = try await svc.client.create(workspace: ref.workspaceId, list: ref.techName, values: values)
                 rec.recapRecordID = created.id
                 targetMeetingID = created.id
@@ -539,7 +587,7 @@ final class AssistController: ObservableObject {
     func finishReview() {
         waitTask?.cancel()
         phase = .prepare
-        record = nil; recapFields = []; crm = nil
+        record = nil; recapFields = []; crm = nil; reviewTables = []; tablesState = .idle
         recapState = .idle; crmState = .idle
         state = AssistState(); status = .idle
         meetingID = nil; clientID = nil; projectID = nil; templateID = nil; goal = ""

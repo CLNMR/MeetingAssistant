@@ -49,6 +49,7 @@ struct AssistSettingsView: View {
                     relationPicker("Meeting → template", slot: .meetings, value: $assist.config.meetingTemplateField)
                     relationPicker("Meeting → team members", slot: .meetings, value: $assist.config.meetingParticipantsField,
                                    noneHint: "Team members who attended are added here, matched by name.")
+                    tablesFieldPicker
                 }
             }
 
@@ -108,6 +109,26 @@ struct AssistSettingsView: View {
                 Text(slot.title)
                 Text(slot.explanation).font(.caption).foregroundStyle(.secondary)
             }
+        }
+    }
+
+    /// Where filled template tables go: a Markdown field of the meeting.
+    @ViewBuilder private var tablesFieldPicker: some View {
+        let schema = assist.schemas[AyaSlot.meetings.rawValue]
+        let fields = schema?.writableContent.filter { $0.kind == .markdown } ?? []
+        let auto = schema.flatMap { s -> String? in
+            var c = assist.config; c.meetingTablesField = nil
+            return c.tablesField(in: s).map { s.field($0)?.label ?? $0 }
+        }
+        VStack(alignment: .leading, spacing: 2) {
+            LabeledContent("Template tables → field") {
+                AyaSelect(selection: $assist.config.meetingTablesField,
+                          options: [(String?.none, "Automatic\(auto.map { " (\($0))" } ?? "")")]
+                            + fields.map { (String?.some($0.key), $0.label) } + [(String?.some("-"), "Don't save tables")])
+                    .frame(maxWidth: 240)
+            }
+            Text("Filled tables from a template are saved under a heading with the template's name. Automatic uses a field named like Protokoll, Leitfaden or Notes, else the summary.")
+                .font(.caption).foregroundStyle(.secondary)
         }
     }
 

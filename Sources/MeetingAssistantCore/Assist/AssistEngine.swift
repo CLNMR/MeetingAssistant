@@ -141,6 +141,7 @@ public actor AssistEngine {
         self.binary = binary
         self.publish = publish
         state.playbook = context.playbookItems
+        state.tables = context.templateTables
         // Known contacts are expected attendees until Claude says otherwise.
         state.attendees = []
     }
@@ -289,6 +290,17 @@ public actor AssistEngine {
         guard let i = state.openPoints.firstIndex(where: { $0.id == id }) else { return }
         state.openPoints[i].status = st
         events.append("user set open point \(id) to \(st.rawValue)")
+        state.changed = []
+        setStatus(status)
+    }
+
+    /// The user filled or corrected a table cell; Claude keeps the user's value.
+    public func setTableCell(row: String, column: String, value: String) {
+        let tid = String(row.split(separator: ".").first ?? "")
+        guard var list = state.tables, let t = list.firstIndex(where: { $0.id == tid }),
+              list[t].set(row: row, column: column, value: value, byUser: true) else { return }
+        state.tables = list
+        events.append("user set table cell \(row) «\(column)» to «\(value)»")
         state.changed = []
         setStatus(status)
     }

@@ -280,3 +280,134 @@ import Testing
         #expect(await e.transcript.map(\.rendered) == ["[00:00:01] Erika: Hallo zusammen", "[00:00:02] Speaker 1: Hi", "[00:00:03] Speaker 2: und hallo"])
     }
 }
+
+@Suite struct TemplateTableTests {
+    static let md = """
+    ## Agenda
+    1. Start (5 Min.)
+    2. Systems
+    3. Wrap-up
+
+    
+    ## 1. Start (5 Min.)
+    - [ ] Introduce the goal
+
+    ## 2. Systems
+    Which modules do you use today, and which matter to you?
+
+    | Area | Module | Used today (system) | Relevant |
+    |---|---|---|---|
+    | Sales | CRM | | |
+    | Sales | Quotes | | |
+    | Stock | Warehouse | | |
+    | Own idea: | | | |
+
+    Per module in use:
+    - [ ] Top three features?
+    - [ ] Biggest benefit?
+
+    ### Delivery model
+    Our idea: standard modules that you adapt yourselves.
+    - [ ] Could you adapt them yourselves?
+
+    ## 3. Wrap-up (last minutes)
+    - [ ] Next steps explained
+    """
+
+    @Test func parsesItemsTablesAndNotes() {
+        let p = TemplateParser.parse(Self.md)
+        // The agenda overview only repeats the headings, so it is no checklist of its own.
+        #expect(!p.items.contains { $0.section == "Agenda" })
+        #expect(p.items.map(\.text).contains("Per module in use: Top three features?"))
+        #expect(p.items.map(\.text).contains("Per module in use: Biggest benefit?"))
+        #expect(p.tables.count == 1)
+        let t = p.tables[0]
+        #expect(t.id == "T1" && t.section == "Systems")
+        #expect(t.prompt == "Which modules do you use today, and which matter to you?")
+        #expect(t.answerColumns == [2, 3])
+        #expect(t.rows.count == 4 && t.rows[0].id == "T1.1")
+        #expect(t.label(t.rows[0]) == "Sales · CRM")
+        #expect(p.notes == ["Delivery model: Our idea: standard modules that you adapt yourselves."])
+    }
+
+    @Test func cellsRespectUserAndOpenRows() {
+        var t = TemplateParser.parse(Self.md).tables[0]
+        let r1 = t.set(row: "T1.1", column: "Used today (system)", value: "Pipedrive", evidence: "we use Pipedrive")
+        #expect(r1)
+        let r2 = t.set(row: "T1.1", column: "relevant", value: "ja")
+        #expect(r2)                       // column name, case-insensitive
+        let r3 = t.set(row: "T1.2", column: "Relevant", value: "nein", byUser: true)
+        #expect(r3)
+        let r4 = t.set(row: "T1.2", column: "Relevant", value: "ja")
+        #expect(!r4)                       // Claude keeps the user's value
+        let r5 = t.set(row: "T1.1", column: "Module", value: "ERP")
+        #expect(!r5)                        // fixed names stay
+        let r6 = t.set(row: "T1.4", column: "Area", value: "Dispatch board")
+        #expect(r6)               // "Own idea:" gets its name
+        #expect(t.rows[3].cells[0] == "Own idea: Dispatch board")
+        #expect(t.rows[0].evidence["Used today (system)"] == "we use Pipedrive")
+        #expect(t.filledCount == 3)                        // the proposal row counts as answered
+    }
+
+    @Test func longTablesOnlyWriteAnsweredRows() {
+        var t = TemplateTable(id: "T2", section: "AI", prompt: "", columns: ["Module", "Use case", "Rating"], answerColumns: [2],
+                              rows: (1...40).map { TemplateTable.Row(id: "T2.\($0)", cells: ["M\($0)", "U\($0)", ""]) })
+        t.set(row: "T2.7", column: "Rating", value: "4")
+        let md = t.markdown()
+        #expect(md.contains("| M7 | U7 | 4 |"))
+        #expect(!md.contains("| M8 |"))
+        #expect(md.contains("39 rows not discussed"))
+    }
+
+    @Test func savingAgainReplacesTheBlock() {
+        var t = TemplateParser.parse(Self.md).tables[0]
+        t.set(row: "T1.1", column: "Relevant", value: "ja")
+        let block1 = TemplateParser.block(templateTitle: "Discovery", tables: [t])!
+        let once = TemplateParser.merge(existing: "## Summary\n- good", block: block1)
+        t.set(row: "T1.3", column: "Relevant", value: "nein")
+        let block2 = TemplateParser.block(templateTitle: "Discovery", tables: [t])!
+        let twice = TemplateParser.merge(existing: once + "\n\n## Later\nkept", block: block2)
+        #expect(twice.components(separatedBy: "## Discovery").count == 2)
+        #expect(twice.contains("| Stock | Warehouse |  | nein |"))
+        #expect(twice.hasPrefix("## Summary\n- good") && twice.hasSuffix("## Later\nkept"))
+        #expect(TemplateParser.block(templateTitle: "x", tables: [TemplateParser.parse(Self.md).tables[0]]) == nil)
+    }
+
+    @Test func claudeFillsCellsThroughOps() {
+        var s = AssistState()
+        s.tables = TemplateParser.parse(Self.md).tables
+        let op = AssistOp.parse(#"{"op":"table_cell","row":"T1.3","column":"Used today (system)","value":"Excel","evidence":"alles in Excel"}"#)
+        #expect(op == .tableCell(row: "T1.3", column: "Used today (system)", value: "Excel", evidence: "alles in Excel"))
+        #expect(s.apply(op!) == ["t:T1.3"])
+        #expect(s.tables?[0].rows[2].cells[2] == "Excel")
+        #expect(s.apply(.tableCell(row: "T9.1", column: "x", value: "y", evidence: nil)).isEmpty)
+    }
+
+    @Test func tablesGoToADedicatedFieldOrTheSummary() {
+        func schema(_ extra: [AyaField]) -> AyaListSchema {
+            AyaListSchema(workspaceId: "W", techName: "pmMeetings", fields: [
+                AyaField(key: "title__value", kind: .text, writable: true),
+                AyaField(key: "summary__value", kind: .markdown, writable: true),
+                AyaField(key: "decisions__value", kind: .markdown, writable: true)] + extra)
+        }
+        var cfg = AyaConfig()
+        #expect(cfg.tablesField(in: schema([])) == "summary__value")
+        let withNotes = schema([AyaField(key: "protokoll__value", kind: .markdown, writable: true)])
+        #expect(cfg.tablesField(in: withNotes) == "protokoll__value")
+        #expect(!RecapBuilder.recapFields(withNotes, config: cfg).map(\.key).contains("protokoll__value"))
+        cfg.meetingTablesField = "decisions__value"
+        #expect(cfg.tablesField(in: withNotes) == "decisions__value")
+        cfg.meetingTablesField = "-"
+        #expect(cfg.tablesField(in: withNotes) == nil)
+
+        var rec = MeetingTargetTests.record()
+        rec.context.playbookTitle = "Discovery"
+        var t = TemplateParser.parse(Self.md).tables[0]
+        t.set(row: "T1.1", column: "Relevant", value: "ja")
+        let v = RecapBuilder.recapValues(MeetingTargetTests.fields(), record: rec, sessionID: "S", startedAt: Date(),
+                                         schema: MeetingTargetTests.schema, config: AyaConfig(), tables: [t])
+        let summary = v["summary__value"]?.string ?? ""
+        #expect(summary.hasPrefix("- went well\n\n## Discovery"))
+        #expect(summary.contains("| Sales | CRM |  | ja |"))
+    }
+}

@@ -11,6 +11,8 @@ public struct AssistRecord: Codable, Sendable {
     public var recapUploadedAt: Date?
     public var crmAppliedAt: Date?
     public var createdContactIDs: [String] = []
+    /// The template's tables after the meeting (completed by Claude, edited by the user).
+    public var tables: [TemplateTable]?
 
     public init(context: AssistContext, state: AssistState, lines: [AssistLine]) {
         self.context = context; self.state = state; self.lines = lines
@@ -70,7 +72,9 @@ public enum RecapBuilder {
 
     /// Fields Claude fills in: writable content fields except those the app sets itself.
     public static func recapFields(_ schema: AyaListSchema, config: AyaConfig) -> [AyaField] {
-        let appSet: Set<String> = [config.meetingDateField, config.meetingExternalIdField, config.meetingTypeField]
+        var appSet: Set<String> = [config.meetingDateField, config.meetingExternalIdField, config.meetingTypeField]
+        // A dedicated field for the template's tables is filled by the app, not drafted.
+        if let t = config.tablesField(in: schema), !t.hasPrefix("summary") { appSet.insert(t) }
         return schema.writableContent.filter { f in
             !appSet.contains(f.key) && f.kind != .datetime && f.kind != .date && !(f.kind == .select && f.options.isEmpty)
         }
@@ -137,10 +141,17 @@ public enum RecapBuilder {
     /// team members are added to its participants.
     public static func recapValues(_ fields: [ProposedValue], record: AssistRecord, sessionID: String, startedAt: Date,
                                    schema: AyaListSchema, config: AyaConfig, existing: AyaRecord? = nil,
-                                   memberIDs: [String] = []) -> [String: JSONValue] {
+                                   memberIDs: [String] = [], tables: [TemplateTable] = []) -> [String: JSONValue] {
         var values: [String: JSONValue] = [:]
         for p in fields where p.include {
             if let v = schema.coerce(.string(p.value), for: p.key) { values[p.key] = v }
+        }
+        // Filled tables go under a heading named after the template, replacing that block if it
+        // is already there (saving again does not duplicate them).
+        if let key = config.tablesField(in: schema),
+           let block = TemplateParser.block(templateTitle: record.context.playbookTitle ?? "Template", tables: tables) {
+            let base = values[key]?.string ?? existing?[key]?.string ?? ""
+            values[key] = .string(TemplateParser.merge(existing: base, block: block))
         }
         func isEmpty(_ key: String) -> Bool { existing?[key].map { $0.isEmpty } ?? true }
         func fill(_ key: String, _ v: JSONValue) {
@@ -164,6 +175,48 @@ public enum RecapBuilder {
             if all != current { values[key] = f.kind == .relations ? .array(all.map { .string($0) }) : .string(all[0]) }
         }
         return values
+    }
+
+    /// Completes the template's tables from the final transcript. Values the user set are kept;
+    /// returns the tables with Claude's values and quotes.
+    public static func completeTables(binary: URL, model: String, record: AssistRecord, sessionID: String,
+                                      tables: [TemplateTable]) async throws -> [TemplateTable] {
+        guard !tables.isEmpty else { return tables }
+        let transcript = transcriptLines(sessionID: sessionID, fallback: record.lines, myName: record.context.myName)
+        var prompt = contextText(record)
+        if let notes = record.context.templateNotes, !notes.isEmpty { prompt += "\n\nTEMPLATE NOTES:\n" + notes.map { "- \($0)" }.joined(separator: "\n") }
+        prompt += "\n\n" + tables.map { AssistPrompts.tableText($0, filledOnly: false) }.joined(separator: "\n")
+        prompt += "\n\nTRANSCRIPT:\n" + transcript.joined(separator: "\n")
+        prompt += """
+        \n\nComplete the tables from the whole transcript. Return one entry per cell that the meeting answered: \
+        fill empty cells, correct values from the live notes that turned out wrong, leave cells nobody talked about out. \
+        Keep values short, in the meeting's language. For a row named "…:" (e.g. "Eigener Vorschlag:") put the proposal \
+        into the name column. Values marked "(set by user)" are final; don't return them.
+        """
+        let columnNames = Array(Set(tables.flatMap(\.columns))).sorted()
+        let rowIDs = tables.flatMap { $0.rows.map(\.id) }
+        let schema = JSONValue.object([
+            "type": .string("object"), "additionalProperties": .bool(false), "required": .array([.string("cells")]),
+            "properties": .object(["cells": .object(["type": .string("array"), "items": .object([
+                "type": .string("object"), "additionalProperties": .bool(false),
+                "required": .array([.string("row"), .string("column"), .string("value"), .string("evidence")]),
+                "properties": .object([
+                    "row": .object(["enum": .array(rowIDs.map { .string($0) })]),
+                    "column": .object(["enum": .array(columnNames.map { .string($0) })]),
+                    "value": .object(["type": .string("string")]),
+                    "evidence": .object(["type": .string("string"), "description": .string("short quote from the transcript")]),
+                ])])])])])
+        let r = try await ClaudeCLI.oneShot(binary: binary, system: AssistPrompts.tablesSystem, prompt: prompt,
+                                            model: model, effort: "medium", schema: schema)
+        guard let cells = r.structured?["cells"]?.array else { throw ClaudeCLI.CLIError.failed("no table values returned") }
+        var out = tables
+        for c in cells {
+            guard let row = c["row"]?.string, let col = c["column"]?.string, let value = c["value"]?.string else { continue }
+            let tid = String(row.split(separator: ".").first ?? "")
+            guard let t = out.firstIndex(where: { $0.id == tid }) else { continue }
+            out[t].set(row: row, column: col, value: value, evidence: c["evidence"]?.string)
+        }
+        return out
     }
 
     /// Team members among the attendees (and the user), matched by name.

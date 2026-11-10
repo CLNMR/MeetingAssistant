@@ -72,6 +72,10 @@ public struct AyaConfig: Codable, Equatable, Sendable {
     public var meetingTypeField = "meeting_type__value"
     public var meetingExternalIdField = "external_meeting_id__value"
 
+    /// Where filled template tables are saved: a Markdown field of the meeting, nil = automatic
+    /// (a field named like Protokoll/Leitfaden/Notes, else the summary), "-" = not saved.
+    public var meetingTablesField: String? = nil
+
     // Template fields.
     public var templateAgendaField = "agenda__value"
     public var templateGoalField = "description__value"
@@ -80,13 +84,23 @@ public struct AyaConfig: Codable, Equatable, Sendable {
     public init() {}
 
     public func list(_ slot: AyaSlot) -> AyaListRef? { lists[slot.rawValue] }
+
+    /// The meeting field that receives filled template tables, or nil when they are not saved.
+    public func tablesField(in schema: AyaListSchema) -> String? {
+        if meetingTablesField == "-" { return nil }
+        let markdown = schema.writableContent.filter { $0.kind == .markdown }
+        if let f = meetingTablesField { return schema.field(f) != nil ? f : nil }
+        let names = ["protokoll", "leitfaden", "notes", "notiz", "mitschrift", "minutes", "template", "vorlage"]
+        if let f = markdown.first(where: { f in names.contains { f.key.lowercased().contains($0) || f.label.lowercased().contains($0) } }) { return f.key }
+        return markdown.first { $0.key.hasPrefix("summary") }?.key ?? markdown.first?.key
+    }
     public mutating func setList(_ slot: AyaSlot, _ ref: AyaListRef?) { lists[slot.rawValue] = ref }
     public var isComplete: Bool { !orgId.isEmpty && AyaSlot.allCases.filter(\.isRequired).allSatisfy { list($0) != nil } }
 
     enum CodingKeys: String, CodingKey, CaseIterable {
         case orgId, lists, contactsClientField
         case meetingClientField, meetingProjectField, meetingTemplateField, meetingParticipantsField
-        case meetingTitleField, meetingDateField, meetingTypeField, meetingExternalIdField
+        case meetingTitleField, meetingDateField, meetingTypeField, meetingExternalIdField, meetingTablesField
         case templateAgendaField, templateGoalField, templateTypeField
     }
 
@@ -107,6 +121,7 @@ public struct AyaConfig: Codable, Equatable, Sendable {
         meetingDateField = str(.meetingDateField, d.meetingDateField)
         meetingTypeField = str(.meetingTypeField, d.meetingTypeField)
         meetingExternalIdField = str(.meetingExternalIdField, d.meetingExternalIdField)
+        meetingTablesField = (try? c.decodeIfPresent(String.self, forKey: .meetingTablesField)) ?? nil
         templateAgendaField = str(.templateAgendaField, d.templateAgendaField)
         templateGoalField = str(.templateGoalField, d.templateGoalField)
         templateTypeField = str(.templateTypeField, d.templateTypeField)
@@ -125,6 +140,7 @@ public struct AyaConfig: Codable, Equatable, Sendable {
         try c.encode(meetingDateField, forKey: .meetingDateField)
         try c.encode(meetingTypeField, forKey: .meetingTypeField)
         try c.encode(meetingExternalIdField, forKey: .meetingExternalIdField)
+        try c.encode(meetingTablesField, forKey: .meetingTablesField)
         try c.encode(templateAgendaField, forKey: .templateAgendaField)
         try c.encode(templateGoalField, forKey: .templateGoalField)
         try c.encode(templateTypeField, forKey: .templateTypeField)

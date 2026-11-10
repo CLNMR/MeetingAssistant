@@ -22,6 +22,12 @@ final class StatePrinter: @unchecked Sendable {
             print("\(ts) 👤 \(a.name)\(a.role.map { ", \($0)" } ?? "")\(a.speaker.map { " = \($0)" } ?? "")\(a.contactID.map { " [Aya \($0)]" } ?? "")")
         }
         for i in s.playbook where !last.playbook.contains(i) { print("\(ts) ✅ \(i.id) \(i.status.rawValue)\(i.evidence.map { " — \($0)" } ?? "")") }
+        for t in s.tables ?? [] {
+            let before = last.tables?.first { $0.id == t.id }
+            for r in t.rows where before?.rows.first(where: { $0.id == r.id }) != r && t.isFilled(r) {
+                print("\(ts) ▦ \(r.id) \(t.label(r)) → " + t.answerColumns.map { r.cells[$0] }.filter { !$0.isEmpty }.joined(separator: " · "))
+            }
+        }
         last = s
     }
 }
@@ -130,6 +136,31 @@ func runAssist(_ args: [String]) -> Never {
             print("\nlines sent to Claude: \(sent.count) · updates: \(final.updates)")
             for l in sent.prefix(12) { print("  " + l.rendered) }
 
+        case "tables":
+            // msctl assist tables <session-id> [--record assist.json]: complete the template tables from the transcript
+            guard let sid = rest.first else { throw AyaError.badRequest("usage: msctl assist tables <session-id> [--record file]") }
+            let rec: AssistRecord
+            if let f = option(rest, "--record") { rec = try JSONIO.read(AssistRecord.self, from: URL(fileURLWithPath: f)) }
+            else if let r = AssistRecord.load(sid) { rec = r }
+            else { throw AyaError.badRequest("no assist.json for this session") }
+            let start = rec.tables ?? rec.state.tables ?? rec.context.templateTables ?? []
+            guard !start.isEmpty else { throw AyaError.badRequest("the meeting's template has no tables") }
+            let t0 = Date()
+            let done = try await RecapBuilder.completeTables(binary: try claudeBinary(), model: option(rest, "--model") ?? "opus",
+                                                             record: rec, sessionID: sid, tables: start)
+            print("tables completed in \(String(format: "%.1f", Date().timeIntervalSince(t0)))s")
+            for (before, t) in zip(start, done) {
+                print("\(t.id) \(t.section): \(before.filledCount) live → \(t.filledCount)/\(t.rows.count)")
+                for r in t.rows where t.isFilled(r) {
+                    let old = before.rows.first { $0.id == r.id }
+                    let mark = old == nil || !before.isFilled(old!) ? "+" : (old!.cells != r.cells ? "~" : " ")
+                    print("  \(mark) \(r.id) \(t.label(r)) → " + t.answerColumns.map { r.cells[$0] }.joined(separator: " | "))
+                }
+            }
+            if let block = TemplateParser.block(templateTitle: rec.context.playbookTitle ?? "Template", tables: done) {
+                print("\n--- Markdown for Aya ---\n" + block)
+            }
+
         case "recap", "crm":
             // msctl assist recap|crm <session-id> [--record assist.json]
             guard let sid = rest.first else { throw AyaError.badRequest("usage: msctl assist recap|crm <session-id> [--record file]") }
@@ -149,7 +180,8 @@ func runAssist(_ args: [String]) -> Never {
                     // Creates the recap with a TEST title, prints it, and deletes it again.
                     let svc = try ayaService()
                     let info = try JSONIO.read(SessionInfo.self, from: AppPaths.info(sid))
-                    var values = RecapBuilder.recapValues(fields, record: rec, sessionID: sid, startedAt: info.startedAt, schema: schema, config: cfg)
+                    var values = RecapBuilder.recapValues(fields, record: rec, sessionID: sid, startedAt: info.startedAt, schema: schema, config: cfg,
+                                                          tables: rec.tables ?? rec.state.tables ?? [])
                     values[cfg.meetingTitleField] = .string("TEST " + (values[cfg.meetingTitleField]?.description ?? ""))
                     let ref = cfg.list(.meetings)!
                     let created = try await svc.client.create(workspace: ref.workspaceId, list: ref.techName, values: values)

@@ -16,26 +16,7 @@ public struct PlaybookItem: Codable, Hashable, Identifiable, Sendable {
 public enum PlaybookParser {
     /// Turns playbook markdown into checklist items. Headings (`### 1. Einstieg`) start a section,
     /// bullets or numbered lines become items. Text without headings becomes P1…Pn.
-    public static func items(_ markdown: String) -> [PlaybookItem] {
-        var out: [PlaybookItem] = []
-        var section = "", sectionNo = 0, itemNo = 0
-        var flat = true
-        for raw in markdown.components(separatedBy: .newlines) {
-            let line = raw.trimmingCharacters(in: .whitespaces)
-            if line.isEmpty { continue }
-            if line.hasPrefix("#") {
-                flat = false
-                section = stripNumber(String(line.drop(while: { $0 == "#" })).trimmingCharacters(in: .whitespaces))
-                sectionNo += 1; itemNo = 0
-                continue
-            }
-            guard let text = bulletText(line) else { continue }
-            itemNo += 1
-            let id = flat ? "P\(out.count + 1)" : "P\(max(sectionNo, 1)).\(itemNo)"
-            out.append(PlaybookItem(id: id, section: section, text: text))
-        }
-        return out
-    }
+    public static func items(_ markdown: String) -> [PlaybookItem] { TemplateParser.parse(markdown).items }
 
     static func bulletText(_ line: String) -> String? {
         for p in ["- [ ] ", "- [x] ", "* [ ] ", "- ", "* ", "• "] where line.hasPrefix(p) {
@@ -80,6 +61,10 @@ public struct AssistContext: Codable, Sendable {
     public var playbookTitle: String?
     public var playbookGoal: String?
     public var playbookItems: [PlaybookItem]
+    /// Fill-in tables from the template (nil in records from before tables).
+    public var templateTables: [TemplateTable]?
+    /// Free text from the template that is neither checklist nor table question.
+    public var templateNotes: [String]?
     public var recaps: [RecapSummary]
     public var goal: String
     public var mode: MeetingMode
@@ -162,7 +147,10 @@ public struct AssistContext: Codable, Sendable {
             playbookID = p.id
             playbookTitle = p.title
             playbookGoal = p[config.templateGoalField]?.string
-            playbookItems = PlaybookParser.items(p[config.templateAgendaField]?.string ?? "")
+            let parsed = TemplateParser.parse(p[config.templateAgendaField]?.string ?? "")
+            playbookItems = parsed.items
+            templateTables = parsed.tables.isEmpty ? nil : parsed.tables
+            templateNotes = parsed.notes.isEmpty ? nil : parsed.notes
         } else {
             playbookID = nil; playbookTitle = nil; playbookGoal = nil; playbookItems = []
         }
@@ -212,6 +200,8 @@ public struct AssistState: Codable, Sendable, Equatable {
     public var openPoints: [OpenPoint] = []
     public var attendees: [Attendee] = []
     public var playbook: [PlaybookItem] = []
+    /// The template's fill-in tables with what was answered so far (nil before tables existed).
+    public var tables: [TemplateTable]?
     public var updates = 0
     public var costUSD = 0.0                        // API-equivalent cost, reported by the CLI
     public var changed: Set<String> = []            // ids touched by the latest update (for highlighting)
@@ -227,6 +217,7 @@ public enum AssistOp: Equatable, Sendable {
     case openPoint(AssistState.OpenPoint)
     case attendee(AssistState.Attendee)
     case playbook(item: String, status: PlaybookItem.Status, evidence: String?)
+    case tableCell(row: String, column: String, value: String, evidence: String?)
 
     /// Parses one output line. Returns nil for anything that isn't a valid op (prose, fences, partial JSON).
     public static func parse(_ line: String) -> AssistOp? {
@@ -263,6 +254,10 @@ public enum AssistOp: Equatable, Sendable {
         case "playbook":
             guard let item = str("item"), let st = PlaybookItem.Status(rawValue: str("status") ?? "") else { return nil }
             return .playbook(item: item, status: st, evidence: str("evidence"))
+        case "table_cell":
+            let value = v["value"].map { $0.string ?? ($0.isNull ? "" : $0.description) }?.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let row = str("row"), let column = str("column"), let value, !value.isEmpty else { return nil }
+            return .tableCell(row: row, column: column, value: value, evidence: str("evidence"))
         default:
             return nil
         }
@@ -309,6 +304,12 @@ extension AssistState {
             playbook[i].status = status
             if let evidence { playbook[i].evidence = evidence }
             return ["p:\(item)"]
+        case .tableCell(let row, let column, let value, let evidence):
+            let tid = String(row.split(separator: ".").first ?? "")
+            guard var list = tables, let t = list.firstIndex(where: { $0.id == tid }),
+                  list[t].set(row: row, column: column, value: value, evidence: evidence) else { return [] }
+            tables = list
+            return ["t:\(row)"]
         }
     }
 }

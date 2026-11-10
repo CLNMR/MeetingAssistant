@@ -70,7 +70,7 @@ private func panelCount(_ s: String) -> AnyView {
 }
 
 /// Briefly tints items that the latest update changed, in the agent's teal.
-private struct Highlight: ViewModifier {
+struct Highlight: ViewModifier {
     let on: Bool
     func body(content: Content) -> some View {
         content
@@ -545,6 +545,7 @@ private struct AssistLiveView: View {
                 if !assist.state.playbook.isEmpty { playbookBox.frame(minWidth: 200) }
             }
             .frame(minHeight: 200)
+            if !(assist.state.tables ?? []).isEmpty { LiveTablesCard(assist: assist) }
             attendeesRow
             transcriptStrip
         }
@@ -794,6 +795,7 @@ private struct AssistReviewView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     recapSection
+                    if !assist.reviewTables.isEmpty { ReviewTablesSection(assist: assist) }
                     if assist.record?.context.clientID != nil { crmSection }
                 }
                 .frame(maxWidth: 920, alignment: .leading)
@@ -1083,8 +1085,13 @@ enum AssistSnapshots {
                                                        reason: "2.000 Crew-Mitglieder vor Ort", include: true)],
                                 contacts: [ContactProposal(contactID: nil, name: "Tobias Brandt", changes: [
                                     ProposedValue(key: "position__value", label: "Position", kind: .text, options: [], old: "", value: "IT, interne Tools", reason: nil, include: true)], include: true)])
+            a.reviewTables = rec.tables ?? rec.state.tables ?? []
             a.phase = .review("snapshot")
             render(ContentView(), app: app, size: CGSize(width: 1200, height: 900), to: dir.appendingPathComponent("3-review.png"), wait: 0.5)
+            if !a.reviewTables.isEmpty {
+                render(ReviewTablesSection(assist: a).frame(width: 1000), app: app, size: CGSize(width: 1000, height: 1250),
+                       to: dir.appendingPathComponent("6-review-tables.png"), wait: 0.5)
+            }
         }
         app.appMode = mode
         render(AssistSettingsView(assist: a), app: app, size: CGSize(width: 620, height: 900), to: dir.appendingPathComponent("5-settings.png"), wait: 1.5)
