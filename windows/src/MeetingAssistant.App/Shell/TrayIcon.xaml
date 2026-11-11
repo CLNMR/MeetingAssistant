@@ -1,0 +1,63 @@
+<!-- Notification-area icon (replaces the Mac menu-bar item; spec 01 "Menu-bar (tray) menu", 04 §6.7).
+     Icon: recording icon while recording, app icon otherwise. Double-click opens the main window. -->
+<tb:TaskbarIcon x:Class="MeetingAssistant.App.Shell.TrayIcon"
+            xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+            xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+            xmlns:tb="clr-namespace:H.NotifyIcon;assembly=H.NotifyIcon.Wpf"
+            xmlns:ui="clr-namespace:MeetingAssistant.App.Controls"
+            xmlns:core="clr-namespace:MeetingAssistant.Core.Model;assembly=MeetingAssistant.Core"
+            MenuActivation="RightClick" NoLeftClickDelay="True"
+            DoubleClickCommand="{Binding ShowMainCommand}" LeftClickCommand="{Binding ShowMainCommand}">
+    <tb:TaskbarIcon.Style>
+        <Style TargetType="tb:TaskbarIcon">
+            <Setter Property="IconSource" Value="pack://application:,,,/MeetingAssistant;component/Assets/AppIcon.ico" />
+            <Setter Property="ToolTipText" Value="MeetingAssistant" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsRecording}" Value="True">
+                    <Setter Property="IconSource" Value="pack://application:,,,/MeetingAssistant;component/Assets/Recording.ico" />
+                    <Setter Property="ToolTipText" Value="{Binding RecordingMenuTitle}" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+    </tb:TaskbarIcon.Style>
+    <tb:TaskbarIcon.ContextMenu>
+        <ContextMenu>
+            <!-- Recording -->
+            <MenuItem Header="{Binding RecordingMenuTitle}" IsEnabled="False"
+                      Visibility="{Binding IsRecording, Converter={StaticResource VisibleWhen}}" />
+            <MenuItem Header="Stop Recording" Command="{Binding ToggleRecordingCommand}" ui:Ui.Icon="{StaticResource Icon.Stop}"
+                      Visibility="{Binding IsRecording, Converter={StaticResource VisibleWhen}}" />
+            <!-- Not recording: set the mode and start -->
+            <MenuItem Header="Record Call" Command="{Binding RecordModeCommand}" CommandParameter="{x:Static core:MeetingMode.Call}"
+                      ui:Ui.Icon="{StaticResource Icon.Call}"
+                      Visibility="{Binding IsRecording, Converter={StaticResource VisibleWhen}, ConverterParameter=Invert}" />
+            <MenuItem Header="Record In person" Command="{Binding RecordModeCommand}" CommandParameter="{x:Static core:MeetingMode.InPerson}"
+                      ui:Ui.Icon="{StaticResource Icon.InPerson}"
+                      Visibility="{Binding IsRecording, Converter={StaticResource VisibleWhen}, ConverterParameter=Invert}" />
+            <MenuItem Header="Record Hybrid" Command="{Binding RecordModeCommand}" CommandParameter="{x:Static core:MeetingMode.Hybrid}"
+                      ui:Ui.Icon="{StaticResource Icon.Hybrid}"
+                      Visibility="{Binding IsRecording, Converter={StaticResource VisibleWhen}, ConverterParameter=Invert}" />
+
+            <!-- Dictation (spec 04 §6.7) -->
+            <Separator Visibility="{Binding DictationEnabled, Converter={StaticResource VisibleWhen}}" />
+            <MenuItem Header="{Binding DictationHotKeyText}" HeaderStringFormat="Dictation: hold {0}" IsEnabled="False"
+                      Visibility="{Binding DictationHotKeyText, Converter={StaticResource VisibleWhen}}" />
+            <MenuItem Header="{Binding ScribePlusHotKeyText}" HeaderStringFormat="Scribe+: hold {0}" IsEnabled="False"
+                      Visibility="{Binding ScribePlusHotKeyText, Converter={StaticResource VisibleWhen}}" />
+            <MenuItem Header="Copy Last Dictation" Command="{Binding CopyLastDictationCommand}"
+                      Visibility="{Binding HasLastDictation, Converter={StaticResource VisibleWhen}}" />
+            <!-- "Unfinished Dictations (N)" submenu: added by the dictation phase (TrayMenu.UnfinishedSlot). -->
+            <MenuItem x:Name="UnfinishedSlot" x:FieldModifier="public" Visibility="Collapsed" />
+
+            <!-- Transcription jobs -->
+            <MenuItem Header="{Binding TranscribingText}" IsEnabled="False"
+                      Visibility="{Binding TranscribingCount, Converter={StaticResource VisibleWhen}}" />
+
+            <Separator />
+            <MenuItem Header="Floating Live Transcript" Command="{Binding ToggleFloatingCommand}" ui:Ui.Icon="{StaticResource Icon.Floating}"
+                      InputGestureText="Ctrl+Shift+L" />
+            <MenuItem Header="Open MeetingAssistant" Command="{Binding ShowMainCommand}" />
+            <MenuItem Header="Quit" Command="{Binding QuitCommand}" InputGestureText="Ctrl+Q" />
+        </ContextMenu>
+    </tb:TaskbarIcon.ContextMenu>
+</tb:TaskbarIcon>

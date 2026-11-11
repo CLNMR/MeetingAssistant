@@ -1,0 +1,198 @@
+<!-- Recorder screen (spec 01 "Scribe window": recorder not recording / recording, live transcript view, model banner). -->
+<UserControl x:Class="MeetingAssistant.App.Views.RecorderView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="clr-namespace:MeetingAssistant.App.Controls"
+             Loaded="OnLoaded">
+    <UserControl.InputBindings>
+        <KeyBinding Modifiers="Ctrl" Key="Return" Command="{Binding StartStopCommand}" />
+    </UserControl.InputBindings>
+    <DockPanel>
+        <!-- Model download banner -->
+        <Border DockPanel.Dock="Top" Padding="12" Background="{DynamicResource PrimaryTint10Brush}"
+                Visibility="{Binding ShowModelBanner, Converter={StaticResource VisibleWhen}}">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Left" Style="{StaticResource Aya.Icon}" Text="{StaticResource Icon.Down}" FontSize="20"
+                           Foreground="{DynamicResource PrimaryBrush}" VerticalAlignment="Center" Margin="0,0,12,0" />
+                <Button DockPanel.Dock="Right" Style="{StaticResource Aya.Button.Primary}" Content="Download Models"
+                        Command="{Binding DownloadModelsCommand}" VerticalAlignment="Center" Margin="12,0,0,0"
+                        Visibility="{Binding IsDownloading, Converter={StaticResource VisibleWhen}, ConverterParameter=Invert}" />
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Style="{StaticResource Aya.Text}" TextWrapping="Wrap"
+                               Text="Download the speech models once (about 530 MB). Everything runs on this PC afterwards; no audio ever leaves it."
+                               Visibility="{Binding IsDownloading, Converter={StaticResource VisibleWhen}, ConverterParameter=Invert}" />
+                    <StackPanel Visibility="{Binding IsDownloading, Converter={StaticResource VisibleWhen}}">
+                        <TextBlock Style="{StaticResource Aya.Text}" Text="{Binding DownloadMessage}" />
+                        <ProgressBar Margin="0,6,0,0" Maximum="1" Value="{Binding DownloadFraction, Mode=OneWay}" />
+                    </StackPanel>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <Grid>
+            <!-- ======================= Not recording ======================= -->
+            <ScrollViewer Visibility="{Binding IsRecording, Converter={StaticResource VisibleWhen}, ConverterParameter=Invert}">
+                <StackPanel Margin="28" MaxWidth="760" HorizontalAlignment="Stretch">
+                    <ui:Eyebrow Text="SCRIBE" />
+                    <TextBlock Style="{StaticResource Aya.Text}" FontSize="24" FontWeight="SemiBold" Margin="0,4,0,0" Text="New recording" />
+                    <TextBlock Style="{StaticResource Aya.Text.Muted}" Margin="0,4,0,0" Text="Everything is recorded and transcribed on this PC." />
+
+                    <ListBox Style="{StaticResource Aya.Segmented}" Margin="0,18,0,0" ItemsSource="{Binding Modes}"
+                             DisplayMemberPath="Title" SelectedValuePath="Value" SelectedValue="{Binding Mode}" />
+                    <TextBlock Style="{StaticResource Aya.Text.Muted}" FontSize="12" Margin="0,8,0,0" TextWrapping="Wrap" Text="{Binding Explanation}" />
+
+                    <ui:Card Margin="0,18,0,0" Padding="16,6">
+                        <StackPanel>
+                            <DockPanel Margin="0,8">
+                                <TextBox DockPanel.Dock="Right" Width="320" Text="{Binding Title, UpdateSourceTrigger=PropertyChanged}"
+                                         ui:Ui.Placeholder="Optional, e.g. Weekly with Anna" />
+                                <TextBlock Style="{StaticResource Aya.Text}" Text="Title" VerticalAlignment="Center" />
+                            </DockPanel>
+                            <Border Height="1" Background="{DynamicResource BorderBrush}" />
+                            <DockPanel Margin="0,8">
+                                <ComboBox DockPanel.Dock="Right" Width="320" ItemsSource="{Binding Devices}" DisplayMemberPath="Title"
+                                          SelectedValuePath="Value" SelectedValue="{Binding SelectedDevice}" DropDownOpened="Devices_DropDownOpened" />
+                                <TextBlock Style="{StaticResource Aya.Text}" Text="Microphone" VerticalAlignment="Center" />
+                            </DockPanel>
+                            <Border Height="1" Background="{DynamicResource BorderBrush}" />
+                            <DockPanel Margin="0,8">
+                                <ComboBox DockPanel.Dock="Right" Width="320" ItemsSource="{Binding ParticipantOptions}" DisplayMemberPath="Title"
+                                          SelectedValuePath="Value" SelectedValue="{Binding Participants}" />
+                                <TextBlock Style="{StaticResource Aya.Text}" Text="Participants" VerticalAlignment="Center" />
+                            </DockPanel>
+                            <Border Height="1" Background="{DynamicResource BorderBrush}" />
+                            <DockPanel Margin="0,8">
+                                <ComboBox DockPanel.Dock="Right" Width="320" ItemsSource="{Binding Languages}" DisplayMemberPath="Title"
+                                          SelectedValuePath="Value" SelectedValue="{Binding Language}" />
+                                <TextBlock Style="{StaticResource Aya.Text}" Text="Language" VerticalAlignment="Center" />
+                            </DockPanel>
+                            <Border Height="1" Background="{DynamicResource BorderBrush}" />
+                            <ToggleButton Style="{StaticResource Aya.Switch}" Margin="0,8" IsChecked="{Binding LiveTranscript}">
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource Aya.Text}" Text="Live transcript" />
+                                    <TextBlock Style="{StaticResource Aya.Text.CaptionMuted}" Text="Show the transcript while recording" />
+                                </StackPanel>
+                            </ToggleButton>
+                        </StackPanel>
+                    </ui:Card>
+
+                    <!-- Mode hint -->
+                    <Border Margin="0,18,0,0" Padding="12" CornerRadius="{StaticResource Radius.Container}" Background="{DynamicResource PrimaryTint10Brush}">
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Left" Style="{StaticResource Aya.Icon}" Text="{Binding HintIcon}" FontSize="13"
+                                       Foreground="{DynamicResource PrimaryBrush}" Margin="0,1,10,0" VerticalAlignment="Top" />
+                            <TextBlock Style="{StaticResource Aya.Text.Muted}" FontSize="12" TextWrapping="Wrap" Text="{Binding Hint}" />
+                        </DockPanel>
+                    </Border>
+
+                    <DockPanel Margin="0,18,0,0">
+                        <Button DockPanel.Dock="Left" ui:Ui.Icon="{StaticResource Icon.Floating}" Content="Floating Live Transcript"
+                                Command="{Binding ToggleFloatingCommand}"
+                                ToolTip="A small always-on-top window with a live transcript that runs without recording (Ctrl+Shift+L)" />
+                        <Button DockPanel.Dock="Right" Style="{StaticResource Aya.Button.Destructive}" ui:Ui.Size="Large"
+                                ui:Ui.Icon="{StaticResource Icon.Record}" Content="Start Recording" Command="{Binding StartStopCommand}"
+                                ToolTip="Start Recording (Ctrl+Enter)" HorizontalAlignment="Right" />
+                    </DockPanel>
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- ======================= Recording ======================= -->
+            <DockPanel Margin="24" MaxWidth="860" Visibility="{Binding IsRecording, Converter={StaticResource VisibleWhen}}">
+                <ui:Card DockPanel.Dock="Top" IsAgent="True" Padding="16">
+                    <StackPanel>
+                        <DockPanel>
+                            <Border DockPanel.Dock="Left" Width="34" Height="34" CornerRadius="17" Background="{DynamicResource AgentBrush}" VerticalAlignment="Center">
+                                <TextBlock Style="{StaticResource Aya.Icon}" Text="{StaticResource Icon.Mic}" FontSize="14"
+                                           Foreground="{DynamicResource AgentForegroundBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <StackPanel DockPanel.Dock="Left" Margin="12,0,0,0" VerticalAlignment="Center">
+                                <ui:Eyebrow Text="{Binding RecordingEyebrow}" Foreground="{DynamicResource AgentTextMidBrush}" />
+                                <TextBlock FontSize="30" FontWeight="SemiBold" Foreground="{DynamicResource TextBrush}" Text="{Binding ElapsedText}"
+                                           FontFamily="{StaticResource Font.Mono}" />
+                            </StackPanel>
+                            <ProgressBar DockPanel.Dock="Left" Width="90" Height="6" Margin="14,0,0,0" Maximum="1"
+                                         Value="{Binding WaveLevel, Mode=OneWay}" VerticalAlignment="Center" ToolTip="Input level" />
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                <Button Style="{StaticResource Aya.Button.Ghost}" Content="Stop Earlier…" Command="{Binding StopEarlierCommand}"
+                                        ToolTip="Forgot to stop? Stop now and delete everything after a chosen time." />
+                                <Button Style="{StaticResource Aya.Button.Destructive}" ui:Ui.Size="Large" Margin="8,0,0,0"
+                                        ui:Ui.Icon="{StaticResource Icon.Stop}" Content="Stop" Command="{Binding StartStopCommand}"
+                                        ToolTip="Stop (Ctrl+Enter)" />
+                            </StackPanel>
+                        </DockPanel>
+                        <!-- Meters -->
+                        <DockPanel Margin="0,14,0,0">
+                            <TextBlock DockPanel.Dock="Left" Width="18" Style="{StaticResource Aya.Icon}" Text="{StaticResource Icon.Mic}" Foreground="{DynamicResource TextMutedBrush}" VerticalAlignment="Center" />
+                            <TextBlock DockPanel.Dock="Left" Width="90" Margin="8,0,0,0" Style="{StaticResource Aya.Text.Muted}" Text="Microphone" />
+                            <ProgressBar Height="8" Maximum="1" Value="{Binding MicMeter, Mode=OneWay}" VerticalAlignment="Center">
+                                <ProgressBar.Style>
+                                    <Style TargetType="ProgressBar" BasedOn="{StaticResource {x:Type ProgressBar}}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding MicHot}" Value="True">
+                                                <Setter Property="Foreground" Value="{DynamicResource DestructiveBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </ProgressBar.Style>
+                            </ProgressBar>
+                        </DockPanel>
+                        <DockPanel Margin="0,8,0,0" Visibility="{Binding ShowCallMeter, Converter={StaticResource VisibleWhen}}">
+                            <TextBlock DockPanel.Dock="Left" Width="18" Style="{StaticResource Aya.Icon}" Text="{StaticResource Icon.Speaker}" Foreground="{DynamicResource TextMutedBrush}" VerticalAlignment="Center" />
+                            <TextBlock DockPanel.Dock="Left" Width="90" Margin="8,0,0,0" Style="{StaticResource Aya.Text.Muted}" Text="Call audio" />
+                            <ProgressBar Height="8" Maximum="1" Value="{Binding CallMeter, Mode=OneWay}" VerticalAlignment="Center">
+                                <ProgressBar.Style>
+                                    <Style TargetType="ProgressBar" BasedOn="{StaticResource {x:Type ProgressBar}}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding CallHot}" Value="True">
+                                                <Setter Property="Foreground" Value="{DynamicResource DestructiveBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </ProgressBar.Style>
+                            </ProgressBar>
+                        </DockPanel>
+                        <TextBlock Margin="0,12,0,0" Style="{StaticResource Aya.Text.Muted}" FontSize="12"
+                                   Text="When you stop, the full transcript with speaker labels is created automatically."
+                                   Visibility="{Binding AutoTranscribe, Converter={StaticResource VisibleWhen}}" />
+                    </StackPanel>
+                </ui:Card>
+
+                <!-- Live transcript -->
+                <DockPanel Margin="0,18,0,0" Visibility="{Binding ShowLive, Converter={StaticResource VisibleWhen}}">
+                    <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                        <TextBlock DockPanel.Dock="Right" Style="{StaticResource Aya.Text.CaptionMuted}" Text="Preview · speaker labels follow a few seconds behind" VerticalAlignment="Center" />
+                        <ui:Eyebrow Text="LIVE TRANSCRIPT" Icon="{StaticResource Icon.Summary}" />
+                    </DockPanel>
+                    <ui:Card Padding="0" MinHeight="200" HasShadow="False">
+                        <ScrollViewer x:Name="LiveScroller" Padding="14">
+                            <ItemsControl ItemsSource="{Binding LiveRows}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="0,0,0,8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="80" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="{Binding Time}" FontSize="11" FontFamily="{StaticResource Font.Mono}" Foreground="{DynamicResource TextSubtleBrush}"
+                                                       Margin="0,2,10,0" />
+                                            <TextBlock Grid.Column="1" Text="{Binding Label}" FontSize="13" FontWeight="SemiBold" Foreground="{Binding LabelBrush}"
+                                                       TextTrimming="CharacterEllipsis" Margin="0,0,10,0" />
+                                            <TextBox Grid.Column="2" x:Name="Line" Style="{StaticResource Aya.SelectableText}" FontSize="14" Text="{Binding Text, Mode=OneWay}"
+                                                     Foreground="{DynamicResource TextBrush}" />
+                                        </Grid>
+                                        <DataTemplate.Triggers>
+                                            <DataTrigger Binding="{Binding IsFinal}" Value="False">
+                                                <Setter TargetName="Line" Property="Foreground" Value="{DynamicResource TextMutedBrush}" />
+                                            </DataTrigger>
+                                        </DataTemplate.Triggers>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                    </ui:Card>
+                </DockPanel>
+            </DockPanel>
+        </Grid>
+    </DockPanel>
+</UserControl>

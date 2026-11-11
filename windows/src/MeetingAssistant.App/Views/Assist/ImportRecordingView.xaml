@@ -1,0 +1,93 @@
+<!-- Import Recording sheet (spec 03 §9.2): 560 px, 20 px padding, a two-column form with right-aligned labels;
+     footer StepLine, Cancel (Esc) and Import (Return). DataContext: ImportRecordingViewModel. -->
+<UserControl x:Class="MeetingAssistant.App.Views.ImportRecordingView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="clr-namespace:MeetingAssistant.App.Controls"
+             xmlns:v="clr-namespace:MeetingAssistant.App.Views"
+             Width="560">
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/MeetingAssistant;component/Views/Assist/AssistResources.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+            <Style x:Key="Label" TargetType="TextBlock">
+                <Setter Property="FontSize" Value="13" />
+                <Setter Property="FontWeight" Value="Medium" />
+                <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+                <Setter Property="HorizontalAlignment" Value="Right" />
+                <Setter Property="VerticalAlignment" Value="Top" />
+                <Setter Property="Margin" Value="0,7,12,12" />
+            </Style>
+        </ResourceDictionary>
+    </UserControl.Resources>
+    <StackPanel Margin="20">
+        <TextBlock Text="Import Recording" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource TextBrush}" />
+        <TextBlock Text="The recording is transcribed on this PC. Claude then drafts the recap for the meeting in Aya." FontSize="12"
+                   Foreground="{DynamicResource TextMutedBrush}" TextWrapping="Wrap" Margin="0,4,0,14" />
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <TextBlock Text="Recording" Style="{StaticResource Label}" />
+            <StackPanel Grid.Column="1" Margin="0,0,0,12">
+                <DockPanel>
+                    <Button Content="{Binding Model.ChooseTitle}" ui:Ui.Size="Small" Command="{Binding ChooseCommand}" VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding Model.FilesText}" FontSize="12" Foreground="{DynamicResource TextBrush}" Margin="8,0,0,0" VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis" ToolTip="{Binding Model.FilesText}" />
+                </DockPanel>
+                <TextBlock Text="One file, or two: first your microphone, then the call audio." FontSize="11" Foreground="{DynamicResource TextSubtleBrush}"
+                           Margin="0,4,0,0" TextWrapping="Wrap" />
+            </StackPanel>
+
+            <TextBlock Grid.Row="1" Text="Mode" Style="{StaticResource Label}" Visibility="{Binding Model.HasTwoFiles, Converter={StaticResource VisibleWhen}}" />
+            <StackPanel Grid.Row="1" Grid.Column="1" Margin="0,0,0,12" Visibility="{Binding Model.HasTwoFiles, Converter={StaticResource VisibleWhen}}">
+                <ListBox Style="{StaticResource Aya.Segmented}" ItemsSource="{Binding TwoTrackModes}" SelectedValuePath="Value" SelectedValue="{Binding TwoTrackMode}"
+                         HorizontalAlignment="Left" Width="200" AutomationProperties.Name="Mode" />
+                <TextBlock Text="{Binding ModeExplanation}" FontSize="11" Foreground="{DynamicResource TextSubtleBrush}" Margin="0,4,0,0" TextWrapping="Wrap" />
+            </StackPanel>
+
+            <TextBlock Grid.Row="2" Text="Date" Style="{StaticResource Label}" />
+            <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal" Margin="0,0,0,12">
+                <DatePicker SelectedDate="{Binding Day}" Width="150" AutomationProperties.Name="Date" />
+                <TextBox Text="{Binding TimeText, UpdateSourceTrigger=PropertyChanged}" Width="70" Margin="8,0,0,0" ui:Ui.Placeholder="HH:mm"
+                         AutomationProperties.Name="Time" />
+            </StackPanel>
+
+            <TextBlock Grid.Row="3" Text="Meeting in Aya" Style="{StaticResource Label}" />
+            <v:AyaSelect Grid.Row="3" Grid.Column="1" ItemsSource="{Binding MeetingChoices}" SelectedValue="{Binding MeetingID}" MaxWidth="360"
+                         HorizontalAlignment="Stretch" Margin="0,0,0,12" />
+
+            <TextBlock Grid.Row="4" Text="Title" Style="{StaticResource Label}" Visibility="{Binding Model.IsNewMeeting, Converter={StaticResource VisibleWhen}}" />
+            <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding Model.Title, UpdateSourceTrigger=PropertyChanged}" ui:Ui.Placeholder="Optional" MaxWidth="360"
+                     Margin="0,0,0,12" Visibility="{Binding Model.IsNewMeeting, Converter={StaticResource VisibleWhen}}" AutomationProperties.Name="Title" />
+
+            <TextBlock Grid.Row="5" Text="Client" Style="{StaticResource Label}" Visibility="{Binding Model.IsNewMeeting, Converter={StaticResource VisibleWhen}}" />
+            <v:AyaSelect Grid.Row="5" Grid.Column="1" ItemsSource="{Binding ClientChoices}" SelectedValue="{Binding ClientID}" MaxWidth="360" Margin="0,0,0,12"
+                         Visibility="{Binding Model.IsNewMeeting, Converter={StaticResource VisibleWhen}}" />
+            <TextBlock Grid.Row="6" Text="Project" Style="{StaticResource Label}" Visibility="{Binding Model.IsNewMeeting, Converter={StaticResource VisibleWhen}}" />
+            <v:AyaSelect Grid.Row="6" Grid.Column="1" ItemsSource="{Binding ProjectChoices}" SelectedValue="{Binding ProjectID}" MaxWidth="360" Margin="0,0,0,12"
+                         Visibility="{Binding Model.IsNewMeeting, Converter={StaticResource VisibleWhen}}" />
+            <TextBlock Grid.Row="7" Text="Template" Style="{StaticResource Label}" Visibility="{Binding Model.IsNewMeeting, Converter={StaticResource VisibleWhen}}" />
+            <v:AyaSelect Grid.Row="7" Grid.Column="1" ItemsSource="{Binding TemplateChoices}" SelectedValue="{Binding TemplateID}" MaxWidth="360" Margin="0,0,0,12"
+                         Visibility="{Binding Model.IsNewMeeting, Converter={StaticResource VisibleWhen}}" />
+        </Grid>
+        <DockPanel Margin="0,6,0,0">
+            <Button DockPanel.Dock="Right" Content="Import" Style="{StaticResource Aya.Button.Primary}" IsDefault="True" Command="{Binding ImportCommand}" Margin="8,0,0,0" />
+            <Button DockPanel.Dock="Right" Content="Cancel" IsCancel="True" Click="Cancel_Click" />
+            <ui:StepLine VerticalAlignment="Center" Kind="{Binding Model.State, Converter={StaticResource StepKind}}" Message="{Binding Model.State.Text}" />
+        </DockPanel>
+    </StackPanel>
+</UserControl>

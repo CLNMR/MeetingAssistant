@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <RootNamespace>MeetingAssistant.App</RootNamespace>
+    <AssemblyName>MeetingAssistant</AssemblyName>
+    <UseWPF>true</UseWPF>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
+    <Product>MeetingAssistant</Product>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Pinned: MVVM source generators and the notification-area (tray) icon. -->
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
+    <PackageReference Include="H.NotifyIcon.Wpf" Version="2.3.2" />
+  </ItemGroup>
+  <ItemGroup>
+    <Resource Include="Assets\AppIcon.ico" />
+    <Resource Include="Assets\Recording.ico" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../MeetingAssistant.Core/MeetingAssistant.Core.csproj" />
+    <ProjectReference Include="../MeetingAssistant.Speech/MeetingAssistant.Speech.csproj" />
+    <ProjectReference Include="../MeetingAssistant.Platform.Windows/MeetingAssistant.Platform.Windows.csproj" />
+  </ItemGroup>
+</Project>

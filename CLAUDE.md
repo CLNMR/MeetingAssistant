@@ -18,6 +18,10 @@ swift test                       # unit tests for MeetingAssistantCore
 ./scripts/build_app.sh           # signed app in build/MeetingAssistant.app
 .build/debug/msctl …             # command-line tool for testing, see README
 MEETINGASSISTANT_HOME=<dir> …    # keep test data out of the real app storage
+
+# Windows app (windows/, .NET 10 SDK; on the Mac in ~/.dotnet)
+dotnet build windows/MeetingAssistant.slnx
+dotnet test windows/tests/MeetingAssistant.Core.Tests
 ```
 
 ## Hard rules

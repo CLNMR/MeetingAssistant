@@ -1,0 +1,32 @@
+<!-- Settings (spec 04 §6): six tabs, 620 x 560: General, Dictation, Vocabulary, Voices, Models, Assist.
+     The window title follows the selected tab, like the Mac Settings window. -->
+<Window x:Class="MeetingAssistant.App.Shell.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="clr-namespace:MeetingAssistant.App.Controls"
+        xmlns:v="clr-namespace:MeetingAssistant.App.Views"
+        Style="{StaticResource Aya.Window}"
+        Title="{Binding SelectedItem.Header, ElementName=Tabs}" Icon="/Assets/AppIcon.ico"
+        Width="620" Height="560" ResizeMode="NoResize" ShowInTaskbar="False"
+        WindowStartupLocation="CenterScreen">
+    <TabControl x:Name="Tabs" Style="{StaticResource Aya.SettingsTabs}">
+        <TabItem Header="General" ui:Ui.Icon="{StaticResource Icon.Settings}">
+            <ScrollViewer><v:GeneralSettingsView /></ScrollViewer>
+        </TabItem>
+        <TabItem Header="Dictation" ui:Ui.Icon="{StaticResource Icon.Keyboard}">
+            <ScrollViewer><v:DictationSettingsView /></ScrollViewer>
+        </TabItem>
+        <TabItem Header="Vocabulary" ui:Ui.Icon="{StaticResource Icon.Vocabulary}">
+            <ScrollViewer><v:VocabularySettingsView /></ScrollViewer>
+        </TabItem>
+        <TabItem Header="Voices" ui:Ui.Icon="{StaticResource Icon.Voices}">
+            <ScrollViewer><v:VoicesSettingsView /></ScrollViewer>
+        </TabItem>
+        <TabItem Header="Models" ui:Ui.Icon="{StaticResource Icon.Models}">
+            <ScrollViewer><v:ModelsSettingsView /></ScrollViewer>
+        </TabItem>
+        <TabItem Header="Assist" ui:Ui.Icon="{StaticResource Icon.Assist}">
+            <ScrollViewer><v:AssistSettingsView /></ScrollViewer>
+        </TabItem>
+    </TabControl>
+</Window>

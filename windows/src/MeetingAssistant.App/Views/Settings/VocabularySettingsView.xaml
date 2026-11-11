@@ -1,0 +1,116 @@
+<!-- Settings › Vocabulary (spec 04 §6.3). DataContext: VocabularySettingsViewModel (created while the page is shown). -->
+<UserControl x:Class="MeetingAssistant.App.Views.VocabularySettingsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="clr-namespace:MeetingAssistant.App.Controls"
+             xmlns:d="clr-namespace:MeetingAssistant.App.Dictation"
+             x:Name="Root">
+    <UserControl.Resources>
+        <Style x:Key="SectionTitle" TargetType="TextBlock" BasedOn="{StaticResource Aya.Text}">
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Margin" Value="4,18,0,6" />
+        </Style>
+        <Style x:Key="Section" TargetType="ui:Card" BasedOn="{StaticResource {x:Type ui:Card}}">
+            <Setter Property="Padding" Value="16,12" />
+            <Setter Property="CornerRadius" Value="10" />
+        </Style>
+        <Style x:Key="Note" TargetType="TextBlock" BasedOn="{StaticResource Aya.Text.CaptionMuted}">
+            <Setter Property="Margin" Value="0,10,0,0" />
+        </Style>
+        <Style x:Key="RemoveButton" TargetType="Button" BasedOn="{StaticResource Aya.IconButton.Borderless}">
+            <Setter Property="Width" Value="24" />
+            <Setter Property="Height" Value="24" />
+            <Setter Property="Content" Value="{StaticResource Icon.Delete}" />
+            <Setter Property="ToolTip" Value="Remove" />
+        </Style>
+    </UserControl.Resources>
+
+    <StackPanel Margin="20,2,20,20">
+        <ui:Card Style="{StaticResource Section}" Margin="0,16,0,0">
+            <StackPanel>
+                <TextBlock Text="{x:Static d:VocabularySettingsViewModel.Intro}" Style="{StaticResource Aya.Text.CaptionMuted}" Margin="0,0,0,12" />
+                <ToggleButton Style="{StaticResource Aya.Switch}" Content="Also correct words that sound alike" IsChecked="{Binding Fuzzy}" />
+            </StackPanel>
+        </ui:Card>
+
+        <!-- Your terms -->
+        <TextBlock Text="Your terms" Style="{StaticResource SectionTitle}" />
+        <ui:Card Style="{StaticResource Section}">
+            <StackPanel>
+                <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <TextBox Text="{Binding NewTerm, UpdateSourceTrigger=PropertyChanged}" ui:Ui.Placeholder="e.g. HubSpot"
+                             AutomationProperties.Name="Name or term">
+                        <TextBox.InputBindings>
+                            <KeyBinding Key="Enter" Command="{Binding AddTermCommand}" />
+                        </TextBox.InputBindings>
+                    </TextBox>
+                    <Button Grid.Column="1" Content="Add" Margin="8,0,0,0" Command="{Binding AddTermCommand}" />
+                </Grid>
+                <ItemsControl ItemsSource="{Binding Terms}" Margin="0,6,0,0">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Margin="0,4,0,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <TextBlock Text="{Binding}" Style="{StaticResource Aya.Text}" VerticalAlignment="Center" />
+                                <Button Grid.Column="1" Style="{StaticResource RemoveButton}"
+                                        Command="{Binding DataContext.RemoveTermCommand, ElementName=Root}" CommandParameter="{Binding}" />
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+        </ui:Card>
+
+        <!-- Replacements -->
+        <TextBlock Text="Replacements" Style="{StaticResource SectionTitle}" />
+        <ui:Card Style="{StaticResource Section}">
+            <StackPanel>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBox Text="{Binding NewSpoken, UpdateSourceTrigger=PropertyChanged}" ui:Ui.Placeholder="n acht n" AutomationProperties.Name="Spoken" />
+                    <TextBlock Grid.Column="1" Style="{StaticResource Aya.Icon}" Text="{StaticResource Icon.ChevronRight}" Margin="8,0" />
+                    <TextBox Grid.Column="2" Text="{Binding NewWritten, UpdateSourceTrigger=PropertyChanged}" ui:Ui.Placeholder="n8n" AutomationProperties.Name="Written">
+                        <TextBox.InputBindings>
+                            <KeyBinding Key="Enter" Command="{Binding AddReplacementCommand}" />
+                        </TextBox.InputBindings>
+                    </TextBox>
+                    <Button Grid.Column="3" Content="Add" Margin="8,0,0,0" Command="{Binding AddReplacementCommand}" />
+                </Grid>
+                <ItemsControl ItemsSource="{Binding Replacements}" Margin="0,6,0,0">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Margin="0,4,0,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <TextBlock Text="{Binding Spoken}" Style="{StaticResource Aya.Text.Muted}" VerticalAlignment="Center" />
+                                <TextBlock Grid.Column="1" Style="{StaticResource Aya.Icon}" Text="{StaticResource Icon.ChevronRight}" Margin="6,0"
+                                           Foreground="{DynamicResource TextSubtleBrush}" />
+                                <TextBlock Grid.Column="2" Text="{Binding Written}" Style="{StaticResource Aya.Text}" VerticalAlignment="Center" />
+                                <Button Grid.Column="3" Style="{StaticResource RemoveButton}"
+                                        Command="{Binding DataContext.RemoveReplacementCommand, ElementName=Root}" CommandParameter="{Binding}" />
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <TextBlock Text="{x:Static d:VocabularySettingsViewModel.ReplacementsCaption}" Style="{StaticResource Note}" />
+            </StackPanel>
+        </ui:Card>
+
+        <!-- From Aya -->
+        <TextBlock Text="From Aya" Style="{StaticResource SectionTitle}" />
+        <ui:Card Style="{StaticResource Section}">
+            <StackPanel>
+                <ToggleButton Style="{StaticResource Aya.Switch}" Content="Use names from Aya" IsChecked="{Binding UseAya}" />
+                <Grid Margin="0,12,0,0">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <TextBlock Text="Names" Style="{StaticResource Aya.Text}" FontWeight="Medium" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="1" Text="{Binding AyaNamesText}" Style="{StaticResource Aya.Text.Muted}" VerticalAlignment="Center" Margin="0,0,10,0" />
+                    <Button Grid.Column="2" Content="{Binding RefreshText}" ui:Ui.Size="Small" Command="{Binding RefreshAyaCommand}" />
+                </Grid>
+                <TextBlock Text="{x:Static d:VocabularySettingsViewModel.AyaCaption}" Style="{StaticResource Note}" />
+            </StackPanel>
+        </ui:Card>
+    </StackPanel>
+</UserControl>

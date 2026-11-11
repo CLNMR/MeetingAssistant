@@ -1,0 +1,25 @@
+<!-- Shortcut button of Settings › Dictation (spec 04 §3.4 "Recording a shortcut"); DataContext: ShortcutSlotViewModel.
+     Shows the shortcut or "Not set"; click → "Press shortcut… (esc to cancel)"; ⓧ clears it. -->
+<UserControl x:Class="MeetingAssistant.App.Views.Dictation.ShortcutRecorder"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="clr-namespace:MeetingAssistant.App.Controls">
+    <StackPanel Orientation="Horizontal">
+        <Button Command="{Binding RecordCommand}" MinWidth="180" ui:Ui.Size="Small">
+            <Button.Style>
+                <Style TargetType="Button" BasedOn="{StaticResource Aya.Button.Secondary}">
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsRecording}" Value="True">
+                            <Setter Property="BorderBrush" Value="{DynamicResource PrimaryBrush}" />
+                            <Setter Property="Foreground" Value="{DynamicResource PrimaryBrush}" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Button.Style>
+            <TextBlock Text="{Binding Text}" />
+        </Button>
+        <Button Style="{StaticResource Aya.IconButton.Borderless}" Content="{StaticResource Icon.Close}" Width="26" Height="26" Margin="4,0,0,0"
+                ToolTip="Clear shortcut" Command="{Binding ClearCommand}"
+                Visibility="{Binding CanClear, Converter={StaticResource VisibleWhen}}" />
+    </StackPanel>
+</UserControl>

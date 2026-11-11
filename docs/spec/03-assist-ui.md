@@ -69,7 +69,7 @@ Whenever the router appears and no Claude binary is known yet, it runs **checkCl
 | **FlowLayout** | Wrapping horizontal layout with 6 px spacing. Used for chips. |
 | **FlowChips** | Pill chips showing the name (medium weight) plus optional detail (`textMuted`). 12 pt, padding 10 × 4, `card` fill, `border` hairline. |
 | **Initial avatar** | The first letter or digit of a name, uppercased, or "•" if there is none. |
-| **Speaker colour** (used in the review) | "Me" is always `primary`. Other speakers get a colour from a fixed 10-colour palette (orange, purple, green, pink, teal, brown, indigo, mint, red, cyan), picked by FNV-1a 64-bit hash of the speaker id modulo 10. |
+| **Speaker colour** (used in the review) | "Me" is always `primary`. Other speakers get a colour from a fixed 10-colour palette (orange, purple, green, pink, teal, brown, indigo, mint, red, cyan), picked by FNV-1a 64-bit hash of the speaker id modulo 10 (start value as in 01-recording "Speaker colours"). |
 
 *Mac implementation:* `StepState` enum in `AssistController.swift`. Views in `AssistView.swift` and `AyaTheme.swift`. `speakerColor` is in `ContentView.swift`.
 
@@ -186,7 +186,7 @@ The live screen is full width. Vertical stack with 8 px gaps:
 #### 6.1 Status bar
 Agent surface, lit while not paused, padding 14 × 10, 12 px spacing. From left to right:
 - **Agent dot** (30 px teal circle with glow) showing a mic icon, or a pause icon when paused.
-- Eyebrow "Listening" or "Paused" (agent colour) above the elapsed time `H:MM:SS` (15 pt semibold, monospaced digits).
+- Eyebrow "Listening" or "Paused" (agent colour) above the elapsed time `clock(t)` (mm:ss below one hour, h:mm:ss from one hour on) (15 pt semibold, monospaced digits).
 - **Waveform**: 14 teal bars, 3 px wide, 2 px apart, max 22 px high, scaled by the level. The level is the max of the mic and system RMS mapped from −60…0 dB to 0…1, and it is 0 while paused.
 - A 1 px vertical divider, 28 px high.
 - The meeting title (14 pt semibold), with the template title below it (11 pt muted).
@@ -334,7 +334,7 @@ Title "Speakers" (16 pt semibold), subtitle "Names are used in the transcript an
   - an 8 px speaker-colour dot;
   - the name button (13 pt semibold, min 140 px; muted when generic) with a pencil icon. It is disabled for "Me". Clicking opens the Person popover (right) with rename;
   - the longest utterance as a quote, truncated at 110 characters with "…" (12 pt muted, 1 line);
-  - right-aligned total talk time `H:MM:SS`.
+  - right-aligned total talk time `clock(t)`.
 - **Rename (final transcript):** set the speaker's label and save the transcript. If the speaker has a voice embedding and is not me, teach the speaker library this name (future auto-recognition). If the old name was generic, replace it with the new name in all recap field values.
 
 #### 8.2 Meeting recap
@@ -409,7 +409,7 @@ A confirmation dialog titled "Delete “<title>”?" with the message "The recor
 - **New Meeting** row: a teal 26 px circle with a plus and the text "New Meeting". It is highlighted (`muted` fill) while in Prepare. Clicking it finishes the review and returns to Prepare.
 - **Search** field (magnifier). Filters by title, case-insensitive contains.
 - **List**: all sessions that have an Assist record, excluding the one currently recording. Order follows the global session order (newest first).
-  - **Session row**: the title (semibold when selected), a status badge (done ✓ success, failed ⚠ warning, queued clock, transcribing waveform in primary, recording red dot, recorded dashed circle), a mode icon (call phone, in-person three people, hybrid), the date "12 Nov, 14:05" and " · H:MM:SS", and a progress bar while transcribing.
+  - **Session row**: the title (semibold when selected), a status badge (done ✓ success, failed ⚠ warning, queued clock, transcribing waveform in primary, recording red dot, recorded dashed circle), a mode icon (call phone, in-person three people, hybrid), the date "12 Nov, 14:05" and " · clock(duration)", and a progress bar while transcribing.
   - Selected row (the one under review): primary 10 % fill. Hover: `hover` 60 %.
   - Clicking a row opens its review (ignored if it is already open).
   - **Context menu**: "Show Transcript" (switches to Scribe with this session), "Show in Finder", a divider, then "Delete…" (destructive, disabled while busy; opens the confirmation in §8.7).
@@ -608,3 +608,15 @@ It is used for layout checks without a display. The Windows port only needs it a
 
 - The code and data files still say "playbook" for the template checklist (`playbook`, `playbookID`, `setPlaybook`). Keep these names in data files for compatibility; the UI says "Checklist".
 - Draft autosave must also flush when the app quits (the Mac does this on `willTerminate`).
+
+### Windows implementation
+
+- The UI is WPF. Shortcuts are `KeyBinding`s, the title bar is custom (`WindowChrome`), popovers are `Popup`/`ContextMenu`. The caption buttons take a 32 px strip at the top.
+- The tray icon replaces the Mac menu-bar item. Closing the main window hides it to the tray; Quit is in the tray menu. Settings: Ctrl+,.
+- The "Notes" tag on planned meetings checks the fields `summary__value`, `decisions__value`, `next_steps__value`. The client preview's profile line is the first field whose key contains "profil".
+- "What did I miss?" needs Claude to be ready. The checklist line lists up to 5 missing items, without a trailing "…".
+- Eyebrow letter spacing is dropped (WPF has none); the HUD's translucent material is an opaque popover colour.
+- Strings say "this PC" where the Mac says "this Mac".
+- "Aya lists updated" uses "just now", "N min ago", "N hr ago", "yesterday", "N days ago" (the Mac uses the system's relative-date wording).
+- Import: the date is a date picker plus an HH:mm field. The Aya select list is a popup that closes on an outside click.
+- Wording: "stored securely" instead of "stored in the Keychain", "Show in Explorer", Ctrl+Shift+Space for Suggest now.

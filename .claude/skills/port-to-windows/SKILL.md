@@ -32,13 +32,18 @@ Use this structure unless `docs/spec/README.md` says otherwise:
 
 ```
 windows/
-  MeetingAssistant.sln
-  src/MeetingAssistant.Core/          net8.0: models, Assist engine, Aya client, Claude CLI, text rules, pipeline logic (no Windows APIs)
-  src/MeetingAssistant.Audio/         net8.0-windows: WASAPI capture, sherpa-onnx models
-  src/MeetingAssistant.App/           WinUI 3 (Windows App SDK) app
-  src/msctl/                          console tool, same commands as the Mac msctl where they make sense
-  tests/MeetingAssistant.Core.Tests/  xUnit, runs on macOS too (dotnet test)
+  MeetingAssistant.slnx, Directory.Build.props, global.json (.NET 10 SDK)
+  src/MeetingAssistant.Core/              net10.0: models, JSON, storage, text rules, pipeline logic, capture orchestration, Aya, Claude CLI, Assist (no Windows APIs)
+  src/MeetingAssistant.Speech/            net10.0: sherpa-onnx models (VAD, ASR, diarization, embeddings), transcription pipeline, live transcriber (runs on macOS too)
+  src/MeetingAssistant.Platform.Windows/  net10.0-windows: WASAPI capture and loopback, playback, hotkeys, paste, UI Automation, Credential Manager
+  src/MeetingAssistant.App/               WPF app (net10.0-windows)
+  src/msctl/                              console tool, same commands as the Mac msctl where they make sense
+  tests/MeetingAssistant.Core.Tests/      xUnit, runs on macOS too (dotnet test)
 ```
+
+The UI is **WPF**, not WinUI 3: WPF builds on macOS with `EnableWindowsTargeting`, so the whole solution compiles on the Mac. WinUI 3 does not. sherpa-onnx ships macOS runtimes, so transcription can be tested on the Mac with real audio.
+
+On the Mac, install the SDK once with `curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 10.0 --install-dir ~/.dotnet` and use `export PATH=$HOME/.dotnet:$PATH`.
 
 Recommended building blocks. Check that each one is current before relying on it.
 
@@ -52,13 +57,14 @@ Recommended building blocks. Check that each one is current before relying on it
 | Voice embeddings ("Me", known voices) | 3D-Speaker CAM++ ONNX via sherpa-onnx (the same model family as the Mac) |
 | Live speaker separation | Start with a sliding-window re-run of offline diarization every few seconds. Use a streaming model (e.g. Sortformer ONNX) once one is available. Keep the spec's output format (`mic-N`, `system-N`, `me`, nil while unknown) |
 | Claude | the `claude` CLI as a child process (`claude.exe`, or `claude.cmd` from npm). The arguments are those in the spec. **Never** the Anthropic API or an API key |
-| Aya key | Windows Credential Manager (`Windows.Security.Credentials.PasswordVault`) |
+| Aya key | Windows Credential Manager (`CredWrite`/`CredRead`, target `MeetingAssistant/aya-api-key`) |
 | Global hotkeys, including modifier-only ones (right Alt) | low-level keyboard hook (`SetWindowsHookEx` with `WH_KEYBOARD_LL`) |
 | Paste | clipboard plus `SendInput` Ctrl+V |
 | Text around the cursor, password fields | UI Automation (`TextPattern`, `IsPassword`) |
 | App data | `%LOCALAPPDATA%\MeetingAssistant\`, with the same sub-folders and files as on the Mac. `MEETINGASSISTANT_HOME` overrides it |
-| Floating live window | an always-on-top WinUI window (`AppWindow`, `OverlappedPresenter.IsAlwaysOnTop`) |
+| Floating live window | an always-on-top WPF window (`Topmost`) |
 | Theme | the Aya colour tokens from the spec, as a XAML resource dictionary |
+| UI | WPF on .NET 10 (see above for why not WinUI 3) |
 
 Build in this order, so something works early:
 
@@ -72,8 +78,9 @@ Build in this order, so something works early:
 
 ## 3. Check
 
-- Run `dotnet test windows/tests/MeetingAssistant.Core.Tests` (this works on macOS).
-- The Windows projects (`net8.0-windows`, WinUI) can only be built on Windows. If you are not on Windows:
+- Run `dotnet build windows/MeetingAssistant.slnx` and `dotnet test windows/tests/MeetingAssistant.Core.Tests` (both work on macOS).
+- Use `msctl` on the Mac to run what is cross-platform with real data (transcription, Assist replay, Aya), with `MEETINGASSISTANT_HOME` pointing to a scratch folder.
+- The Windows projects compile on the Mac but only run on Windows. If you are not on Windows:
   - say so;
   - list exactly what needs testing on a Windows machine;
   - keep a Windows CI job (`windows-latest`, `dotnet build` plus `dotnet test`) in `.github/workflows/` working.

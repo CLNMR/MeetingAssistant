@@ -349,7 +349,7 @@ Per line (context menu): **Change speaker to ▸** <each speaker> / "New speaker
 
 Every edit is saved to `transcript.json` immediately.
 
-**Speaker colours:** "me" = accent colour; others = 10-colour palette (orange, purple, green, pink, teal, brown, indigo, mint, red, cyan) indexed by 64-bit FNV-1a hash of the speaker id's UTF-8 bytes mod 10 (stable across runs and platforms).
+**Speaker colours:** "me" = accent colour; others = 10-colour palette (orange, purple, green, pink, teal, brown, indigo, mint, red, cyan) indexed by 64-bit FNV-1a hash of the speaker id's UTF-8 bytes mod 10 (stable across runs and platforms). The hash starts from **1469598103934665603** (the Mac's constant, one digit shorter than the standard FNV offset basis; keep it so colours match across platforms) and multiplies by the FNV prime 1099511628211.
 
 **Mac implementation:** `VoiceprintStore`, `SpeakerLibrary` (`Pipeline/SpeakerID.swift`), `Transcript.reassign/merge/normalize/markMe/unusedSpeakerLabel` (`Model/Models.swift`), `SessionDetailView` speaker bar, `VoiceSettings` + `EnrollmentRecorder` in `SettingsView.swift`, `speakerColor` in `ContentView.swift`.
 
@@ -465,7 +465,10 @@ The session list is built by reading every `Sessions/*/session.json` (unreadable
 - UTF-8, pretty-printed, **keys sorted** alphabetically, written atomically (temp file + rename).
 - Dates: ISO 8601 in UTC **without fractional seconds**, e.g. `"2026-11-10T13:03:22Z"`. The Mac reader rejects fractional seconds.
 - Optional fields that are nil are **omitted** (not `null`).
-- Numbers: Double/Float as JSON numbers; embeddings as arrays of numbers.
+- Numbers: Double/Float as JSON numbers; embeddings as arrays of numbers. Integral values have no decimal point (`3`), exponents are lower-case (`-4.335016e-05`).
+- Strings: only `"`, `\` and control characters are escaped; everything else (umlauts, emoji, U+202F) is written as UTF-8. In these files `/` is written as `\/` (the Mac encoder's default); compact JSON inside prompts does not escape `/`.
+- Empty arrays and objects are written as `[` newline, blank line, indent `]` (Swift's pretty format), e.g. `"turns" : [\n\n  ]`.
+- Pretty format: two-space indent and `"key" : value` (space before the colon). The reinstall guard greps for `"status" : "recording"`.
 
 #### `session.json` (SessionInfo)
 
@@ -555,7 +558,7 @@ Other UI state: `appMode` (`scribe`/`assist`), `dismissedSplitHints`, `floatingP
 
 **Recorder screen (recording):** "Recording · <mode>", large elapsed clock, waveform of max(mic, system) level, "Stop Earlier…", "Stop" (⌘↩); meters "Microphone" and (Call/Hybrid) "Call audio" (−60…0 dB mapped to 0…1, red above 90 %); "When you stop, the full transcript with speaker labels is created automatically." (if auto-transcribe); live transcript.
 
-**Session detail:** header (play/pause Space, editable title, mode, date "weekday, d month year, HH:mm", "· N speakers", position/duration, "Assist Recap" button if `assist.json` exists and Assist is not running), search field (filters turns by text or speaker label), toolbar Export / Transcribe Again / Edit (Trim…, Split…) — the last two disabled while processing. Body: progress + Cancel while processing; else timeline, split hint, speaker bar ("Click a speaker to rename or merge. Right-click a line to change its speaker."), transcript list; else empty state ("Not transcribed yet." / "Waiting to be transcribed…" / "Transcription failed.") with "Transcribe Now".
+**Session detail:** header (play/pause Space, editable title, mode, date "weekday, d month year, HH:mm", "· N speakers", position/duration, "Assist Recap" button if `assist.json` exists and Assist is not running), search field (filters turns by text or speaker label), toolbar Export / Transcribe Again / Edit (Trim…, Split…) — the last two disabled while processing. Body: progress + Cancel while processing; else timeline, split hint, speaker bar ("Click a speaker to rename or merge. Right-click a line to change its speaker."), transcript list; else empty state ("Not transcribed yet." / "Waiting to be transcribed…" (only while `queued`) / "Transcription failed.") with "Transcribe Now".
 
 **Main menu:** File (after New): "Start Recording"/"Stop Recording" ⇧⌘R, "Import Audio…" ⌘I, "Floating Live Transcript" ⇧⌘L. View (before sidebar): "Scribe" ⌘1, "Assist" ⌘2.
 
@@ -565,3 +568,25 @@ Other UI state: `appMode` (`scribe`/`assist`), `dismissedSplitHints`, `floatingP
 
 **Mac implementation:** `MeetingAssistantApp.swift` (commands, `MenuBarExtra`), `ContentView.swift` (`AyaRail`, `RecordingsPanel`, `SessionRow`, `StatusBadge`), `RecorderView.swift`, `SessionDetailView.swift`. Developer CLI `msctl` (`Sources/msctl/main.swift`): `import`, `transcribe`, `export`, `livetest`, `taptest`, `trim`, `split`.
 **Windows notes:** menu-bar extra → notification-area (tray) icon with the same context menu; "Show in Finder" → "Show in Explorer" (`explorer /select,`); ⌘ shortcuts → Ctrl; attention request → `FlashWindowEx`; system settings link → `ms-settings:privacy-microphone`.
+
+### Windows implementation
+
+The Windows app (`windows/`, see `windows-sync.md`) follows this section with these differences:
+
+- **Files:** new tracks are `mic.wav` / `system.wav` (16 kHz mono 16-bit PCM). The WAV header is rewritten after every second of audio, so a crash loses at most about one second. Readers take `.caf` first, then `.wav`, so Mac sessions open on Windows and the other way round. Trim and split write WAV for parts they create.
+- **Mic capture:** WASAPI shared mode on the chosen endpoint (`inputDeviceUID` holds the Windows endpoint id), resampled to 16 kHz mono. When the device disappears or the default input changes, capture is rebuilt after 0.4 s and the gap is padded with silence. A blocked microphone in Windows privacy settings shows the global error with the button "Open Windows Settings" (`ms-settings:privacy-microphone`).
+- **Call audio:** WASAPI process loopback that excludes the app's own process tree (Windows 10 2004+; format chosen by the app: 48 kHz stereo 16-bit with automatic conversion, else 44.1 kHz). Fallback: classic loopback of the default output device. Both are rebuilt when the default output changes. The Mac's rate and stuck-silence watchdogs are not needed. A source without timestamps is treated as "buffer ended now" for alignment.
+- **Playback:** both tracks are mixed into one stream (NAudio) instead of two synchronised players.
+- **Models:** sherpa-onnx with ONNX models downloaded into `<root>/Models/` (about 530 MB): `silero-vad`, `pyannote-segmentation-3-0`, `campplus` (3D-Speaker CAM++ `3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced`), `parakeet-ultra` (`sherpa-onnx-nemo-parakeet-tdt-0.6b-ultra-int8`, the same Parakeet as the Mac). Download steps: "Silero", "Speaker diarization (pyannote segmentation 3.0)", "CAM++", "Parakeet". A folder is renamed into place only when complete.
+- **Engines:** only Parakeet. Qwen3-ASR has no word-timestamp aligner in sherpa-onnx, so the Qwen3 option and the language check are not offered; `transcript.json` always says `parakeet-ultra`.
+- **Words:** Parakeet tokens that start with a space begin a new word.
+- **Gain:** quiet recordings are boosted before VAD, ASR and diarization so that speech reaches a level of 0.1 (at most 20×, never turned down). Without it, quiet room audio lost about a quarter of its words.
+- **Offline diarization:** sherpa-onnx pyannote segmentation + CAM++ embeddings, clustering threshold 1.1. VAD runs over the whole track, not in 300 s pieces. Cluster merging, word assignment, echo removal and the speaker thresholds (0.50 / 0.55 / 0.80) are as above.
+- **Live diarization:** there is no streaming diarizer. Every 3 s the last 20 s of a track are diarized again, and each local speaker is matched to up to 8 fixed slots by CAM++ similarity (≥ 0.5). A word's label is set once and never changes. Output format as above (`me`, `mic-N`, `system-N`, nil while unknown); labels arrive about 3–5 s late.
+- **Live VAD:** sherpa-onnx does not expose Silero's probability, so a 4096-sample block counts as speech when any of its 512-sample windows is speech. The VAD is reset every 100–200 blocks.
+- **Speed:** CPU only, about 5× slower than the Mac (a 30-minute meeting takes about 2 minutes).
+- **Window state:** the floating window's and main window's positions are kept under `floatingPanel.frame` and `mainWindow.frame` ("left,top,width,height[,max]").
+- **Preferences:** all Mac user-defaults keys (`preferences.v1`, `assist.settings.v1`, `aya.config.v2`, `appMode`, `dismissedSplitHints`, `floatingPanel.*`, …) live in one file, `<root>/preferences.json`.
+- **msctl record** records from files only (`--mic`, `--system`, `--system-delay`, `--speed`); live capture happens in the app.
+- **Recording start failure:** the empty session folder is deleted (the Mac leaves it with status `recording`). On quit or Windows shutdown a running recording is finished first; with auto-transcribe on it is saved as `queued`, so the next launch transcribes it.
+- **UI:** the model banner says "about 530 MB"; Settings › Models lists per-model sizes and has "Delete Models…" (blocked while recording or transcribing). Settings › General also has the microphone picker. Import takes at most two files. A finished transcription plays the "Asterisk" system sound and flashes the taskbar (the Mac plays "Glass").

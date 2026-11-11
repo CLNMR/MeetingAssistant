@@ -1,0 +1,19 @@
+<!-- Live table sheet (spec 03 §6.5): at least 760 x 560 on the page background; header, scrollable grid, Close (Return). -->
+<Window x:Class="MeetingAssistant.App.Views.LiveTableWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:v="clr-namespace:MeetingAssistant.App.Views"
+        Style="{StaticResource Aya.Window}" Title="{Binding Name}" Width="860" Height="620" MinWidth="760" MinHeight="560"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <Window.Resources>
+        <ResourceDictionary Source="/MeetingAssistant;component/Views/Assist/AssistResources.xaml" />
+    </Window.Resources>
+    <DockPanel Margin="20" Background="{DynamicResource PageBrush}">
+        <ContentControl DockPanel.Dock="Top" Content="{Binding}" ContentTemplate="{StaticResource Assist.TableHeader}" Focusable="False" Margin="0,0,0,12" />
+        <Button DockPanel.Dock="Bottom" Content="Close" Style="{StaticResource Aya.Button.Primary}" IsDefault="True" IsCancel="True"
+                HorizontalAlignment="Right" Margin="0,12,0,0" Click="Close_Click" />
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <v:TemplateTableGrid />
+        </ScrollViewer>
+    </DockPanel>
+</Window>

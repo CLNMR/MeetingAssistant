@@ -1,0 +1,42 @@
+<!-- Connect screen (spec 03 §4): a centred 500 px card (28 px padding, radius 14, soft shadow) on the backdrop. -->
+<UserControl x:Class="MeetingAssistant.App.Views.AssistConnectView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="clr-namespace:MeetingAssistant.App.Controls"
+             xmlns:v="clr-namespace:MeetingAssistant.App.Views">
+    <UserControl.Resources>
+        <ResourceDictionary Source="/MeetingAssistant;component/Views/Assist/AssistResources.xaml" />
+    </UserControl.Resources>
+    <Grid>
+        <ui:Backdrop />
+        <Border Width="500" HorizontalAlignment="Center" VerticalAlignment="Center" Padding="28" CornerRadius="14" BorderThickness="1"
+                Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource BorderBrush}" DataContext="{Binding Form}">
+            <Border.Effect>
+                <DropShadowEffect BlurRadius="24" ShadowDepth="12" Direction="270" Opacity="0.08" />
+            </Border.Effect>
+            <StackPanel>
+                <StackPanel Orientation="Horizontal">
+                    <ui:LogoTile Width="44" Height="44" />
+                    <StackPanel Margin="12,0,0,0" VerticalAlignment="Center">
+                        <ui:Eyebrow Text="Assist" Foreground="{DynamicResource AgentTextMidBrush}" />
+                        <TextBlock Text="Connect Aya" FontSize="22" FontWeight="SemiBold" Foreground="{DynamicResource TextBrush}" />
+                    </StackPanel>
+                </StackPanel>
+                <TextBlock Style="{StaticResource Aya.Text.Muted}" Margin="0,16,0,0"
+                           Text="Pick a planned meeting, or a template, client and project from Aya, start the meeting, and Claude suggests the next question, keeps a running summary, and tracks attendees, open points and the template's checklist while you talk. Afterwards it saves the recap to the meeting in Aya." />
+                <TextBlock Text="Organization id" FontSize="12" FontWeight="Medium" Foreground="{DynamicResource TextMutedBrush}" Margin="0,16,0,4" />
+                <TextBox Text="{Binding OrgId, UpdateSourceTrigger=PropertyChanged}" ui:Ui.Placeholder="from app.hey-aya.ai/org/&lt;id&gt;/…"
+                         AutomationProperties.Name="Organization id" />
+                <TextBlock Text="API key" FontSize="12" FontWeight="Medium" Foreground="{DynamicResource TextMutedBrush}" Margin="0,10,0,4" />
+                <v:ApiKeyBox />
+                <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
+                    <Button Content="Connect" Style="{StaticResource Aya.Button.Primary}" IsDefault="True" Command="{Binding ConnectCommand}" />
+                    <ui:StepLine Margin="12,0,0,0" VerticalAlignment="Center" Kind="{Binding Aya.ConnectState, Converter={StaticResource StepKind}}"
+                                 Message="{Binding Aya.ConnectState.Text}" MaxWidth="330" />
+                </StackPanel>
+                <TextBlock Style="{StaticResource Aya.Text.Caption}" Margin="0,16,0,0"
+                           Text="The lists (clients, contacts, projects, templates, meetings) can be changed later in Settings › Assist." />
+            </StackPanel>
+        </Border>
+    </Grid>
+</UserControl>

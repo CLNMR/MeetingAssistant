@@ -1,0 +1,18 @@
+<!-- Navigation: each view model type is shown by its view. Setting a ContentControl's Content to a view model
+     navigates (ShellViewModel.Current, ScribeViewModel.Detail, AssistViewModel.Router). -->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:vm="clr-namespace:MeetingAssistant.App.ViewModels"
+                    xmlns:v="clr-namespace:MeetingAssistant.App.Views">
+    <DataTemplate DataType="{x:Type vm:ScribeViewModel}"><v:ScribeView /></DataTemplate>
+    <DataTemplate DataType="{x:Type vm:AssistViewModel}"><v:AssistView /></DataTemplate>
+    <DataTemplate DataType="{x:Type vm:RecorderViewModel}"><v:RecorderView /></DataTemplate>
+    <DataTemplate DataType="{x:Type vm:SessionDetailViewModel}"><v:SessionDetailView /></DataTemplate>
+    <DataTemplate DataType="{x:Type vm:AssistConnectViewModel}"><v:AssistConnectView /></DataTemplate>
+    <DataTemplate DataType="{x:Type vm:AssistPrepareViewModel}"><v:AssistPrepareView /></DataTemplate>
+    <DataTemplate DataType="{x:Type vm:AssistLiveViewModel}"><v:AssistLiveView /></DataTemplate>
+    <DataTemplate DataType="{x:Type vm:AssistReviewViewModel}"><v:AssistReviewView /></DataTemplate>
+    <DataTemplate DataType="{x:Type vm:AssistMeetingsViewModel}"><v:AssistMeetingsPanel /></DataTemplate>
+    <DataTemplate DataType="{x:Type vm:ImportRecordingViewModel}"><v:ImportRecordingView /></DataTemplate>
+    <DataTemplate DataType="{x:Type vm:PersonCardViewModel}"><v:PersonCard /></DataTemplate>
+</ResourceDictionary>

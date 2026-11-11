@@ -1,0 +1,112 @@
+<!-- Settings › Dictation (spec 04 §6.2). DataContext: DictationSettingsViewModel (created while the page is shown). -->
+<UserControl x:Class="MeetingAssistant.App.Views.DictationSettingsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="clr-namespace:MeetingAssistant.App.Controls"
+             xmlns:d="clr-namespace:MeetingAssistant.App.Dictation"
+             xmlns:dv="clr-namespace:MeetingAssistant.App.Views.Dictation">
+    <UserControl.Resources>
+        <Style x:Key="SectionTitle" TargetType="TextBlock" BasedOn="{StaticResource Aya.Text}">
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Margin" Value="4,18,0,6" />
+        </Style>
+        <Style x:Key="Section" TargetType="ui:Card" BasedOn="{StaticResource {x:Type ui:Card}}">
+            <Setter Property="Padding" Value="16,12" />
+            <Setter Property="CornerRadius" Value="10" />
+        </Style>
+        <Style x:Key="RowLabel" TargetType="TextBlock" BasedOn="{StaticResource Aya.Text}">
+            <Setter Property="FontWeight" Value="Medium" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style x:Key="Row" TargetType="Grid">
+            <Setter Property="Margin" Value="0,10,0,0" />
+        </Style>
+        <Style x:Key="Note" TargetType="TextBlock" BasedOn="{StaticResource Aya.Text.CaptionMuted}">
+            <Setter Property="Margin" Value="0,10,0,0" />
+        </Style>
+    </UserControl.Resources>
+
+    <StackPanel Margin="20,2,20,20">
+        <!-- Shortcuts -->
+        <ui:Card Style="{StaticResource Section}" Margin="0,16,0,0">
+            <StackPanel>
+                <ToggleButton Style="{StaticResource Aya.Switch}" Content="Push-to-talk dictation" IsChecked="{Binding Enabled}" />
+                <Grid Style="{StaticResource Row}" IsEnabled="{Binding Enabled}">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <TextBlock Text="Word for word" Style="{StaticResource RowLabel}" />
+                    <dv:ShortcutRecorder Grid.Column="1" DataContext="{Binding Plain}" />
+                </Grid>
+                <Grid Style="{StaticResource Row}" IsEnabled="{Binding Enabled}">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <TextBlock Text="Scribe+" Style="{StaticResource RowLabel}" />
+                    <dv:ShortcutRecorder Grid.Column="1" DataContext="{Binding Plus}" />
+                </Grid>
+                <TextBlock Text="{Binding ShortcutError}" Style="{StaticResource Aya.Text.Caption}" Foreground="{DynamicResource DestructiveBrush}"
+                           Margin="0,8,0,0" Visibility="{Binding ShortcutError, Converter={StaticResource VisibleWhen}}" />
+                <TextBlock Text="{x:Static d:DictationSettingsViewModel.Help}" Style="{StaticResource Aya.Text.Muted}" Margin="0,12,0,0" />
+                <TextBlock Text="{x:Static d:DictationSettingsViewModel.ShortcutHelp}" Style="{StaticResource Note}" />
+            </StackPanel>
+        </ui:Card>
+
+        <!-- Scribe+ -->
+        <TextBlock Text="Scribe+" Style="{StaticResource SectionTitle}" />
+        <ui:Card Style="{StaticResource Section}">
+            <StackPanel>
+                <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <TextBlock Text="Claude Code" Style="{StaticResource RowLabel}" />
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center"
+                                Visibility="{Binding ClaudeReady, Converter={StaticResource VisibleWhen}}">
+                        <TextBlock Style="{StaticResource Aya.Icon}" Text="{StaticResource Icon.CheckCircle}" Foreground="{DynamicResource SuccessBrush}" Margin="0,0,6,0" />
+                        <TextBlock Text="Ready" Style="{StaticResource Aya.Text}" Foreground="{DynamicResource SuccessBrush}" />
+                    </StackPanel>
+                    <TextBlock Grid.Column="1" Text="Not set up – see Settings › Assist" Style="{StaticResource Aya.Text.Muted}" VerticalAlignment="Center"
+                               Visibility="{Binding ClaudeReady, Converter={StaticResource VisibleWhen}, ConverterParameter=Invert}" />
+                </Grid>
+                <Grid Style="{StaticResource Row}">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="260" /></Grid.ColumnDefinitions>
+                    <TextBlock Text="Model" Style="{StaticResource RowLabel}" />
+                    <ComboBox Grid.Column="1" ItemsSource="{Binding Models}" DisplayMemberPath="Title" SelectedValuePath="Value"
+                              SelectedValue="{Binding Model}" />
+                </Grid>
+                <ToggleButton Style="{StaticResource Aya.Switch}" Margin="0,12,0,0" Content="Use the text around the cursor as context"
+                              IsChecked="{Binding UseContext}" />
+                <ToggleButton Style="{StaticResource Aya.Switch}" Margin="0,12,0,0" IsChecked="{Binding KeepWarm}">
+                    <TextBlock Text="Keep Claude ready (saves about 3 s per dictation, uses about 200 MB memory)" TextWrapping="Wrap" />
+                </ToggleButton>
+                <TextBlock Text="{x:Static d:DictationSettingsViewModel.PlusCaption}" Style="{StaticResource Note}" />
+            </StackPanel>
+        </ui:Card>
+
+        <!-- Pasting -->
+        <TextBlock Text="Pasting" Style="{StaticResource SectionTitle}" />
+        <ui:Card Style="{StaticResource Section}">
+            <StackPanel>
+                <ToggleButton Style="{StaticResource Aya.Switch}" Content="Fit spaces and capitals to the text around the cursor" IsChecked="{Binding Fit}" />
+                <ToggleButton Style="{StaticResource Aya.Switch}" Margin="0,12,0,0" Content="Mute other sound while dictating" IsChecked="{Binding Mute}" />
+                <TextBlock Text="{x:Static d:DictationSettingsViewModel.PastingCaption}" Style="{StaticResource Note}" />
+            </StackPanel>
+        </ui:Card>
+
+        <!-- Permission (Windows: microphone privacy and elevated windows instead of Accessibility) -->
+        <TextBlock Text="Permission" Style="{StaticResource SectionTitle}" />
+        <ui:Card Style="{StaticResource Section}">
+            <StackPanel>
+                <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <TextBlock Text="Microphone" Style="{StaticResource RowLabel}" />
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center"
+                                Visibility="{Binding MicrophoneBlocked, Converter={StaticResource VisibleWhen}, ConverterParameter=Invert}">
+                        <TextBlock Style="{StaticResource Aya.Icon}" Text="{StaticResource Icon.CheckCircle}" Foreground="{DynamicResource SuccessBrush}" Margin="0,0,6,0" />
+                        <TextBlock Text="Allowed" Style="{StaticResource Aya.Text}" Foreground="{DynamicResource SuccessBrush}" />
+                    </StackPanel>
+                    <Button Grid.Column="1" Content="Allow…" ui:Ui.Size="Small" Command="{Binding OpenMicrophoneSettingsCommand}"
+                            Visibility="{Binding MicrophoneBlocked, Converter={StaticResource VisibleWhen}}" />
+                </Grid>
+                <TextBlock Text="{x:Static d:DictationSettingsViewModel.PermissionCaption}" Style="{StaticResource Note}" />
+            </StackPanel>
+        </ui:Card>
+
+        <TextBlock Text="{x:Static d:DictationSettingsViewModel.Footer}" Style="{StaticResource Aya.Text.CaptionMuted}" Margin="4,14,4,0" />
+    </StackPanel>
+</UserControl>

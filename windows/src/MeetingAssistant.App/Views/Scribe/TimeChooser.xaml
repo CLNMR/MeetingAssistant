@@ -1,0 +1,15 @@
+<!-- A time in a recording: slider plus an editable h:mm:ss / mm:ss / seconds field (Enter or leaving applies). -->
+<UserControl x:Class="MeetingAssistant.App.Views.TimeChooser"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <DockPanel>
+        <TextBox x:Name="Field" DockPanel.Dock="Right" Width="80" Margin="10,0,0,0" TextAlignment="Right"
+                 FontFamily="{StaticResource Font.Mono}" Text="{Binding Text, UpdateSourceTrigger=PropertyChanged}"
+                 LostKeyboardFocus="Field_LostKeyboardFocus">
+            <TextBox.InputBindings>
+                <KeyBinding Key="Return" Command="{Binding ApplyCommand}" />
+            </TextBox.InputBindings>
+        </TextBox>
+        <Slider Minimum="0" Maximum="{Binding Maximum}" Value="{Binding Value}" VerticalAlignment="Center" />
+    </DockPanel>
+</UserControl>

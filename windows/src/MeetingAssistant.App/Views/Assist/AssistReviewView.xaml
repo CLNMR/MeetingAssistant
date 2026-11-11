@@ -1,0 +1,311 @@
+<!-- Review screen (spec 03 §8): header (Delete, Show Transcript, Done — Done is not the default button), then Speakers,
+     Meeting recap, Template tables, During the meeting and Update the CRM, max 920 px wide. DataContext: AssistReviewViewModel. -->
+<UserControl x:Class="MeetingAssistant.App.Views.AssistReviewView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="clr-namespace:MeetingAssistant.App.Controls"
+             xmlns:v="clr-namespace:MeetingAssistant.App.Views">
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/MeetingAssistant;component/Views/Assist/AssistResources.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+
+            <!-- Editor of one value: Yes/No, select, Markdown, or text (spec 03 §8.2). DataContext: ValueEditorViewModel. -->
+            <DataTemplate x:Key="Editor">
+                <Grid>
+                    <ListBox x:Name="Bool" Style="{StaticResource Aya.Segmented}" ItemsSource="{Binding YesNo}" SelectedValuePath="Value"
+                             SelectedValue="{Binding BoolValue}" Width="160" HorizontalAlignment="Left" Visibility="Collapsed" />
+                    <v:AyaSelect x:Name="Sel" ItemsSource="{Binding Options}" SelectedValue="{Binding SelectValue}" MaxWidth="260" HorizontalAlignment="Left"
+                                 MinWidth="160" Visibility="Collapsed" />
+                    <TextBox x:Name="Md" Text="{Binding Value, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="90"
+                             MaxHeight="260" VerticalScrollBarVisibility="Auto" VerticalContentAlignment="Top" Visibility="Collapsed" />
+                    <TextBox x:Name="Tx" Text="{Binding Value, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" MaxHeight="120"
+                             VerticalScrollBarVisibility="Auto" Visibility="Collapsed" />
+                </Grid>
+                <DataTemplate.Triggers>
+                    <DataTrigger Binding="{Binding IsBoolean}" Value="True"><Setter TargetName="Bool" Property="Visibility" Value="Visible" /></DataTrigger>
+                    <DataTrigger Binding="{Binding IsSelect}" Value="True"><Setter TargetName="Sel" Property="Visibility" Value="Visible" /></DataTrigger>
+                    <DataTrigger Binding="{Binding IsMarkdown}" Value="True"><Setter TargetName="Md" Property="Visibility" Value="Visible" /></DataTrigger>
+                    <DataTrigger Binding="{Binding IsText}" Value="True"><Setter TargetName="Tx" Property="Visibility" Value="Visible" /></DataTrigger>
+                </DataTemplate.Triggers>
+            </DataTemplate>
+
+            <!-- A recap field or CRM change: checkbox + label + tag, "Now" + old value, editor, note / reason. -->
+            <DataTemplate x:Key="ValueRow">
+                <StackPanel Margin="0,10,0,10">
+                    <StackPanel Orientation="Horizontal">
+                        <CheckBox IsChecked="{Binding Include}" VerticalAlignment="Center" Visibility="{Binding ShowToggle, Converter={StaticResource VisibleWhen}}"
+                                  AutomationProperties.Name="{Binding Label}">
+                            <TextBlock Text="{Binding Label}" FontSize="13" FontWeight="SemiBold" />
+                        </CheckBox>
+                        <TextBlock Text="{Binding Label}" FontSize="13" FontWeight="Medium" Foreground="{DynamicResource TextBrush}"
+                                   Visibility="{Binding ShowToggle, Converter={StaticResource VisibleWhen}, ConverterParameter=Invert}" />
+                        <ui:AyaTag x:Name="Tag" Text="{Binding Tag}" Margin="6,0,0,0" VerticalAlignment="Center" Tint="{DynamicResource TextMutedBrush}"
+                                   Visibility="{Binding Tag, Converter={StaticResource VisibleWhen}}" />
+                    </StackPanel>
+                    <DockPanel Margin="20,4,0,0" Visibility="{Binding HasOld, Converter={StaticResource VisibleWhen}}">
+                        <TextBlock Text="Now" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource TextSubtleBrush}" Margin="0,2,6,0" VerticalAlignment="Top" />
+                        <TextBlock x:Name="Old" Text="{Binding Old}" FontSize="12" Foreground="{DynamicResource TextMutedBrush}" TextWrapping="Wrap"
+                                   TextTrimming="CharacterEllipsis" MaxHeight="64" />
+                    </DockPanel>
+                    <ContentControl Content="{Binding}" ContentTemplate="{StaticResource Editor}" Margin="20,6,0,0" Focusable="False"
+                                    Visibility="{Binding ShowEditor, Converter={StaticResource VisibleWhen}}" />
+                    <StackPanel x:Name="NoteRow" Orientation="Horizontal" Margin="20,6,0,0" Visibility="{Binding Note, Converter={StaticResource VisibleWhen}}">
+                        <TextBlock x:Name="NoteIcon" Text="{StaticResource Icon.Calendar}" FontFamily="{StaticResource Font.Icon}" FontSize="11"
+                                   Foreground="{DynamicResource WarningBrush}" Margin="0,1,6,0" VerticalAlignment="Top" />
+                        <TextBlock x:Name="Note" Text="{Binding Note}" FontSize="11" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" MaxWidth="780" />
+                    </StackPanel>
+                </StackPanel>
+                <DataTemplate.Triggers>
+                    <MultiDataTrigger>
+                        <MultiDataTrigger.Conditions>
+                            <Condition Binding="{Binding TagIsWarning}" Value="True" />
+                            <Condition Binding="{Binding IsRecap}" Value="True" />
+                        </MultiDataTrigger.Conditions>
+                        <Setter TargetName="Tag" Property="Tint" Value="{DynamicResource WarningBrush}" />
+                    </MultiDataTrigger>
+                    <DataTrigger Binding="{Binding OldLines}" Value="2"><Setter TargetName="Old" Property="MaxHeight" Value="34" /></DataTrigger>
+                    <DataTrigger Binding="{Binding OldLines}" Value="3"><Setter TargetName="Old" Property="MaxHeight" Value="50" /></DataTrigger>
+                    <DataTrigger Binding="{Binding IsRecap}" Value="False">
+                        <Setter TargetName="NoteIcon" Property="Text" Value="{StaticResource Icon.Quote}" />
+                        <Setter TargetName="NoteIcon" Property="Foreground" Value="{DynamicResource AgentTextMidBrush}" />
+                        <Setter TargetName="Note" Property="Foreground" Value="{DynamicResource AgentTextMidBrush}" />
+                    </DataTrigger>
+                </DataTemplate.Triggers>
+            </DataTemplate>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <Grid>
+        <ui:Backdrop />
+        <DockPanel Margin="20">
+            <!-- Header -->
+            <ui:PageHeader DockPanel.Dock="Top" Eyebrow="Meeting review" Title="{Binding Title}" Subtitle="{Binding Subtitle}" Margin="0,0,0,14">
+                <ui:PageHeader.Trailing>
+                    <StackPanel Orientation="Horizontal">
+                        <Button Content="Delete" Style="{StaticResource Aya.Button.Ghost}" ui:Ui.Icon="{StaticResource Icon.Delete}" Command="{Binding DeleteCommand}"
+                                ToolTip="Delete the recording, transcript and notes on this PC" ToolTipService.ShowOnDisabled="True" />
+                        <Button Content="Show Transcript" ui:Ui.Icon="{StaticResource AIcon.Chat}" Command="{Binding ShowTranscriptCommand}" Margin="8,0,0,0" />
+                        <Button Content="Done" Style="{StaticResource Aya.Button.Primary}" Command="{Binding DoneCommand}" Margin="8,0,0,0" IsDefault="False" />
+                    </StackPanel>
+                </ui:PageHeader.Trailing>
+            </ui:PageHeader>
+
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel MaxWidth="920" Margin="0,0,0,12">
+
+                    <!-- 8.1 Speakers -->
+                    <ui:Card Padding="18">
+                        <StackPanel>
+                            <TextBlock Text="Speakers" Style="{StaticResource Assist.SectionTitle}" />
+                            <TextBlock Text="Names are used in the transcript and the recap. Click a speaker to name them." Style="{StaticResource Assist.Subtitle}" />
+                            <TextBlock Text="{Binding SpeakersWaiting}" FontSize="13" Foreground="{DynamicResource TextMutedBrush}" Margin="0,10,0,0" TextWrapping="Wrap"
+                                       Visibility="{Binding HasSpeakers, Converter={StaticResource VisibleWhen}, ConverterParameter=Invert}" />
+                            <ItemsControl ItemsSource="{Binding Speakers}" Margin="0,10,0,0" Visibility="{Binding HasSpeakers, Converter={StaticResource VisibleWhen}}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <DockPanel Margin="0,0,0,6">
+                                            <Ellipse Width="8" Height="8" Fill="{Binding ColorIndex, Converter={StaticResource SpeakerBrush}}" VerticalAlignment="Center" Margin="0,0,10,0" />
+                                            <Button x:Name="NameBtn" Style="{StaticResource Assist.PlainButton}" Tag="speaker" MinWidth="140" Margin="0,0,10,0"
+                                                    IsEnabled="{Binding IsMe, Converter={StaticResource Not}}" AutomationProperties.Name="{Binding Label}">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock x:Name="Nm" Text="{Binding Label}" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource TextBrush}" />
+                                                    <TextBlock Text="{StaticResource Icon.Edit}" FontFamily="{StaticResource Font.Icon}" FontSize="10" Margin="4,0,0,0"
+                                                               VerticalAlignment="Center" Foreground="{DynamicResource TextSubtleBrush}"
+                                                               Visibility="{Binding IsMe, Converter={StaticResource VisibleWhen}, ConverterParameter=Invert}" />
+                                                </StackPanel>
+                                            </Button>
+                                            <TextBlock DockPanel.Dock="Right" Text="{Binding TalkTime}" FontSize="11" Foreground="{DynamicResource TextSubtleBrush}"
+                                                       Typography.NumeralAlignment="Tabular" Margin="8,0,0,0" VerticalAlignment="Center" />
+                                            <TextBlock Text="{Binding Quote}" FontSize="12" Foreground="{DynamicResource TextMutedBrush}" TextTrimming="CharacterEllipsis"
+                                                       VerticalAlignment="Center" />
+                                        </DockPanel>
+                                        <DataTemplate.Triggers>
+                                            <DataTrigger Binding="{Binding IsGeneric}" Value="True">
+                                                <Setter TargetName="Nm" Property="Foreground" Value="{DynamicResource TextMutedBrush}" />
+                                            </DataTrigger>
+                                        </DataTemplate.Triggers>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </ui:Card>
+
+                    <!-- 8.2 Meeting recap -->
+                    <ui:Card Padding="18" Margin="0,12,0,0">
+                        <StackPanel>
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <ui:AyaTag Text="In Aya" Icon="{StaticResource Icon.Check}" Tint="{DynamicResource SuccessBrush}" VerticalAlignment="Center"
+                                               Visibility="{Binding IsUploaded, Converter={StaticResource VisibleWhen}}" />
+                                    <Button Content="Open in Aya" ui:Ui.Pill="True" ui:Ui.Icon="{StaticResource AIcon.External}" Margin="8,0,0,0"
+                                            Command="{Binding OpenInAyaCommand}" ToolTip="Open this meeting in Aya"
+                                            Visibility="{Binding IsUploaded, Converter={StaticResource VisibleWhen}}" />
+                                    <Button Content="{Binding DraftTitle}" ui:Ui.Pill="True" ui:Ui.Icon="{StaticResource Icon.Assist}" Margin="8,0,0,0"
+                                            Command="{Binding DraftCommand}" Style="{StaticResource Aya.Button.Agent}" Visibility="{Binding HasDraft, Converter={StaticResource VisibleWhen}, ConverterParameter=Invert}" />
+                                    <Button Content="{Binding DraftTitle}" ui:Ui.Pill="True" ui:Ui.Icon="{StaticResource Icon.Assist}" Margin="8,0,0,0"
+                                            Command="{Binding DraftCommand}" Style="{StaticResource Aya.Button.Secondary}" Visibility="{Binding HasDraft, Converter={StaticResource VisibleWhen}}" />
+                                </StackPanel>
+                                <StackPanel>
+                                    <TextBlock Text="Meeting recap" Style="{StaticResource Assist.SectionTitle}" />
+                                    <TextBlock Text="{Binding RecapTarget}" Style="{StaticResource Assist.Subtitle}"
+                                               Visibility="{Binding RecapTarget, Converter={StaticResource VisibleWhen}}" />
+                                </StackPanel>
+                            </DockPanel>
+                            <DockPanel Margin="0,12,0,0">
+                                <TextBlock Text="Save to" FontSize="13" FontWeight="Medium" Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center" Margin="0,0,10,0" />
+                                <v:AyaSelect ItemsSource="{Binding TargetChoices}" SelectedValue="{Binding TargetID}" Width="420" />
+                                <TextBlock Text="Fields that already have content in Aya are only overwritten when you tick them." FontSize="11"
+                                           Foreground="{DynamicResource TextSubtleBrush}" TextWrapping="Wrap" Margin="10,0,0,0" VerticalAlignment="Center"
+                                           Visibility="{Binding HasTarget, Converter={StaticResource VisibleWhen}}" />
+                            </DockPanel>
+                            <ui:StepLine Margin="0,8,0,0" Kind="{Binding Review.RecapState, Converter={StaticResource StepKind}}" Message="{Binding Review.RecapState.Text}" />
+                            <StackPanel Visibility="{Binding HasDraft, Converter={StaticResource VisibleWhen}}">
+                                <ItemsControl ItemsSource="{Binding Fields}" Focusable="False">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <StackPanel>
+                                                <Border Height="1" Background="{DynamicResource BorderBrush}" />
+                                                <ContentControl Content="{Binding}" ContentTemplate="{StaticResource ValueRow}" Focusable="False" />
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <Button Content="{Binding UploadTitle}" Style="{StaticResource Aya.Button.Primary}" ui:Ui.Icon="{StaticResource AIcon.Upload}"
+                                        HorizontalAlignment="Right" Command="{Binding UploadCommand}" Margin="0,6,0,0" />
+                            </StackPanel>
+                        </StackPanel>
+                    </ui:Card>
+
+                    <!-- 8.3 Template tables -->
+                    <ui:Card Padding="18" Margin="0,12,0,0" Visibility="{Binding HasTables, Converter={StaticResource VisibleWhen}}">
+                        <StackPanel>
+                            <DockPanel>
+                                <Button DockPanel.Dock="Right" Content="{Binding CompleteTitle}" ui:Ui.Pill="True" ui:Ui.Icon="{StaticResource Icon.Assist}"
+                                        Command="{Binding CompleteTablesCommand}" VerticalAlignment="Center"
+                                        ToolTip="Claude fills the tables from the final transcript. Cells you edited stay as they are." Style="{StaticResource Aya.Button.Agent}" Visibility="{Binding CompleteIsAgent, Converter={StaticResource VisibleWhen}}" />
+                                <Button DockPanel.Dock="Right" Content="{Binding CompleteTitle}" ui:Ui.Pill="True" ui:Ui.Icon="{StaticResource Icon.Assist}"
+                                        Command="{Binding CompleteTablesCommand}" VerticalAlignment="Center"
+                                        ToolTip="Claude fills the tables from the final transcript. Cells you edited stay as they are." Style="{StaticResource Aya.Button.Secondary}" Visibility="{Binding CompleteIsAgent, Converter={StaticResource VisibleWhen}, ConverterParameter=Invert}" />
+                                <StackPanel>
+                                    <TextBlock Text="Template tables" Style="{StaticResource Assist.SectionTitle}" />
+                                    <TextBlock Text="{Binding TablesSubtitle}" Style="{StaticResource Assist.Subtitle}" />
+                                </StackPanel>
+                            </DockPanel>
+                            <ui:StepLine Margin="0,8,0,0" Kind="{Binding Review.TablesState, Converter={StaticResource StepKind}}" Message="{Binding Review.TablesState.Text}" />
+                            <ItemsControl ItemsSource="{Binding Tables}" Focusable="False">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Margin="0,12,0,0" DataContext="{Binding Grid}">
+                                            <ContentControl Content="{Binding}" ContentTemplate="{StaticResource Assist.TableHeader}" Focusable="False" Margin="0,0,0,8" />
+                                            <v:TemplateTableGrid />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </ui:Card>
+
+                    <!-- 8.4 During the meeting -->
+                    <ui:Card Padding="18" Margin="0,12,0,0" Visibility="{Binding HasMeetingState, Converter={StaticResource VisibleWhen}}">
+                        <StackPanel>
+                            <TextBlock Text="During the meeting" Style="{StaticResource Assist.SectionTitle}" />
+                            <TextBlock Text="The live notes as they were when the meeting ended." Style="{StaticResource Assist.Subtitle}" />
+                            <ItemsControl ItemsSource="{Binding Attendees}" ItemsPanel="{StaticResource Assist.Flow}" Margin="0,12,0,0"
+                                          Visibility="{Binding Attendees.Count, Converter={StaticResource VisibleWhen}}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <ContentControl Content="{Binding}" ContentTemplate="{StaticResource Assist.AttendeeChip}" Margin="0,0,6,6" Focusable="False" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <StackPanel Margin="0,12,0,0" Visibility="{Binding SummaryItems.Count, Converter={StaticResource VisibleWhen}}">
+                                <ui:Eyebrow Text="Summary" Icon="{StaticResource Icon.Summary}" Margin="0,0,0,8" />
+                                <ItemsControl ItemsSource="{Binding SummaryItems}" ItemTemplate="{StaticResource Assist.SummaryParagraph}" />
+                            </StackPanel>
+                            <StackPanel Margin="0,4,0,0" Visibility="{Binding OpenPointItems.Count, Converter={StaticResource VisibleWhen}}">
+                                <ui:Eyebrow Text="Open points" Icon="{StaticResource Icon.OpenPoint}" Margin="0,0,0,5" />
+                                <ItemsControl ItemsSource="{Binding OpenPointItems}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <DockPanel Margin="0,0,0,5">
+                                                <TextBlock x:Name="Ic" Text="{StaticResource AIcon.Circle}" FontFamily="{StaticResource Font.Icon}" FontSize="13"
+                                                           Foreground="{DynamicResource TextSubtleBrush}" Margin="0,1,8,0" VerticalAlignment="Top" />
+                                                <TextBox x:Name="Tx" Style="{StaticResource Aya.SelectableText}" Text="{Binding Text, Mode=OneWay}" FontSize="13" />
+                                            </DockPanel>
+                                            <DataTemplate.Triggers>
+                                                <DataTrigger Binding="{Binding IsAnswered}" Value="True">
+                                                    <Setter TargetName="Ic" Property="Text" Value="{StaticResource Icon.CheckCircle}" />
+                                                    <Setter TargetName="Ic" Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                                    <Setter TargetName="Tx" Property="Foreground" Value="{DynamicResource TextMutedBrush}" />
+                                                    <Setter TargetName="Tx" Property="TextDecorations" Value="Strikethrough" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding IsParked}" Value="True">
+                                                    <Setter TargetName="Ic" Property="Text" Value="{StaticResource AIcon.PauseCircle}" />
+                                                    <Setter TargetName="Tx" Property="Foreground" Value="{DynamicResource TextMutedBrush}" />
+                                                </DataTrigger>
+                                            </DataTemplate.Triggers>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                            <TextBlock Text="{Binding ChecklistLine}" FontSize="12" Foreground="{DynamicResource TextMutedBrush}" TextWrapping="Wrap" Margin="0,8,0,0"
+                                       Visibility="{Binding ChecklistLine, Converter={StaticResource VisibleWhen}}" />
+                        </StackPanel>
+                    </ui:Card>
+
+                    <!-- 8.5 Update the CRM -->
+                    <ui:Card Padding="18" Margin="0,12,0,0" Visibility="{Binding HasClient, Converter={StaticResource VisibleWhen}}">
+                        <StackPanel>
+                            <DockPanel>
+                                <Button DockPanel.Dock="Right" Content="{Binding ProposeTitle}" ui:Ui.Pill="True" ui:Ui.Icon="{StaticResource Icon.Assist}"
+                                        Command="{Binding ProposeCommand}" VerticalAlignment="Center" Style="{StaticResource Aya.Button.Agent}" Visibility="{Binding HasProposal, Converter={StaticResource VisibleWhen}, ConverterParameter=Invert}" />
+                                <Button DockPanel.Dock="Right" Content="{Binding ProposeTitle}" ui:Ui.Pill="True" ui:Ui.Icon="{StaticResource Icon.Assist}"
+                                        Command="{Binding ProposeCommand}" VerticalAlignment="Center" Style="{StaticResource Aya.Button.Secondary}" Visibility="{Binding HasProposal, Converter={StaticResource VisibleWhen}}" />
+                                <StackPanel>
+                                    <TextBlock Text="Update the CRM" Style="{StaticResource Assist.SectionTitle}" />
+                                    <TextBlock Text="Claude compares the client and contact records with what was said. Nothing is changed until you tick it and apply."
+                                               Style="{StaticResource Assist.Subtitle}" />
+                                </StackPanel>
+                            </DockPanel>
+                            <ui:StepLine Margin="0,8,0,0" Kind="{Binding Review.CrmState, Converter={StaticResource StepKind}}" Message="{Binding Review.CrmState.Text}" />
+                            <StackPanel Visibility="{Binding HasProposal, Converter={StaticResource VisibleWhen}}">
+                                <StackPanel Visibility="{Binding HasClientChanges, Converter={StaticResource VisibleWhen}}" Margin="0,10,0,0">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="{StaticResource Icon.Building}" FontFamily="{StaticResource Font.Icon}" FontSize="13" Foreground="{DynamicResource PrimaryBrush}"
+                                                   VerticalAlignment="Center" Margin="0,0,8,0" />
+                                        <TextBlock Text="{Binding ClientTitle}" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource TextBrush}" />
+                                    </StackPanel>
+                                    <ItemsControl ItemsSource="{Binding ClientChanges}" ItemTemplate="{StaticResource ValueRow}" Focusable="False" />
+                                </StackPanel>
+                                <ItemsControl ItemsSource="{Binding Contacts}" Focusable="False">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border CornerRadius="10" BorderThickness="1" Padding="12" Margin="0,8,0,0" Background="{DynamicResource PageTranslucentBrush}"
+                                                    BorderBrush="{DynamicResource BorderBrush}">
+                                                <StackPanel>
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <CheckBox IsChecked="{Binding Include}" VerticalAlignment="Center" AutomationProperties.Name="{Binding Name}">
+                                                            <TextBlock Text="{Binding Name}" FontSize="14" FontWeight="SemiBold" />
+                                                        </CheckBox>
+                                                        <ui:AyaTag Text="New contact" Icon="{StaticResource Icon.Add}" Tint="{DynamicResource AgentTextMidBrush}" Margin="6,0,0,0"
+                                                                   VerticalAlignment="Center" Visibility="{Binding IsNew, Converter={StaticResource VisibleWhen}}" />
+                                                    </StackPanel>
+                                                    <ItemsControl ItemsSource="{Binding Changes}" ItemTemplate="{StaticResource ValueRow}" Margin="20,0,0,0" Focusable="False"
+                                                                  Visibility="{Binding Include, Converter={StaticResource VisibleWhen}}" />
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <Button Content="{Binding ApplyTitle}" Style="{StaticResource Aya.Button.Primary}" ui:Ui.Icon="{StaticResource Icon.CheckCircle}"
+                                        HorizontalAlignment="Right" Command="{Binding ApplyCommand}" Margin="0,12,0,0" />
+                            </StackPanel>
+                        </StackPanel>
+                    </ui:Card>
+                </StackPanel>
+            </ScrollViewer>
+        </DockPanel>
+    </Grid>
+</UserControl>

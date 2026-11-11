@@ -1,0 +1,130 @@
+<!-- Meetings panel (spec 03 §9.1): header with Import Recording, New Meeting row (highlighted while preparing), search,
+     past Assist meetings with status badge, mode, date and duration, progress while transcribing, and a context menu.
+     DataContext: AssistMeetingsViewModel. -->
+<UserControl x:Class="MeetingAssistant.App.Views.AssistMeetingsPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="clr-namespace:MeetingAssistant.App.Controls">
+    <UserControl.Resources>
+        <ResourceDictionary Source="/MeetingAssistant;component/Views/Assist/AssistResources.xaml" />
+    </UserControl.Resources>
+    <ui:Card Padding="14">
+        <DockPanel>
+            <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
+                <Button DockPanel.Dock="Right" Style="{StaticResource Aya.IconButton}" ui:Ui.Icon="{StaticResource Icon.Import}"
+                        ToolTip="Import a recording, link it to a meeting in Aya or create one, and get the recap"
+                        AutomationProperties.Name="Import Recording" Command="{Binding ImportCommand}" />
+                <TextBlock Style="{StaticResource Aya.Text.Heading}" Text="Meetings" VerticalAlignment="Center" />
+            </DockPanel>
+            <Button DockPanel.Dock="Top" Style="{StaticResource Assist.PlainButton}" Margin="0,0,0,10" Command="{Binding NewMeetingCommand}"
+                    AutomationProperties.Name="New Meeting">
+                <Border x:Name="NewRow" CornerRadius="10" BorderThickness="1" Padding="8" BorderBrush="{DynamicResource BorderBrush}">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Background" Value="Transparent" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsPrepare}" Value="True">
+                                    <Setter Property="Background" Value="{DynamicResource MutedBrush}" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <StackPanel Orientation="Horizontal">
+                        <Border Width="26" Height="26" CornerRadius="13" Background="{DynamicResource AgentBrush}">
+                            <TextBlock Style="{StaticResource Aya.Icon}" Text="{StaticResource Icon.Add}" FontSize="11"
+                                       Foreground="{DynamicResource AgentForegroundBrush}" />
+                        </Border>
+                        <TextBlock Text="New Meeting" Margin="10,0,0,0" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center"
+                                   Foreground="{DynamicResource TextBrush}" />
+                    </StackPanel>
+                </Border>
+            </Button>
+            <TextBox DockPanel.Dock="Top" Style="{StaticResource Aya.SearchBox}" Margin="0,0,0,10" Text="{Binding Filter, UpdateSourceTrigger=PropertyChanged}"
+                     AutomationProperties.Name="Search meetings" />
+            <Grid>
+                <TextBlock Text="{Binding EmptyText}" FontSize="13" Foreground="{DynamicResource TextMutedBrush}" HorizontalAlignment="Center"
+                           Margin="0,20,0,0" VerticalAlignment="Top" Visibility="{Binding IsEmpty, Converter={StaticResource VisibleWhen}}" />
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <ItemsControl x:Name="List" ItemsSource="{Binding Items}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Button Style="{StaticResource Assist.PlainButton}" Margin="0,0,0,2" AutomationProperties.Name="{Binding Title}"
+                                        Command="{Binding DataContext.OpenCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding}">
+                                    <Button.ContextMenu>
+                                        <ContextMenu>
+                                            <MenuItem Header="Show Transcript" Command="{Binding PlacementTarget.Tag.ShowTranscriptCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                      CommandParameter="{Binding}" />
+                                            <MenuItem Header="Show in Explorer" Command="{Binding PlacementTarget.Tag.ShowInExplorerCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                      CommandParameter="{Binding}" />
+                                            <Separator />
+                                            <MenuItem Header="Delete…" Command="{Binding PlacementTarget.Tag.DeleteCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                      CommandParameter="{Binding}" />
+                                        </ContextMenu>
+                                    </Button.ContextMenu>
+                                    <Button.Tag>
+                                        <Binding Path="DataContext" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
+                                    </Button.Tag>
+                                    <Border x:Name="Bd" CornerRadius="8" Padding="10,7" Background="Transparent">
+                                        <StackPanel>
+                                            <DockPanel>
+                                                <Grid DockPanel.Dock="Right" Margin="4,0,0,0" VerticalAlignment="Center">
+                                                    <TextBlock x:Name="Badge" FontFamily="{StaticResource Font.Icon}" FontSize="11" />
+                                                    <Ellipse x:Name="RecDot" Width="7" Height="7" Fill="{DynamicResource RecordingBrush}" Visibility="Collapsed" />
+                                                </Grid>
+                                                <TextBlock x:Name="T" Text="{Binding Title}" FontSize="13" FontWeight="Medium" TextTrimming="CharacterEllipsis"
+                                                           Foreground="{DynamicResource TextBrush}" />
+                                            </DockPanel>
+                                            <StackPanel Orientation="Horizontal" Margin="0,3,0,0" TextElement.Foreground="{DynamicResource TextMutedBrush}">
+                                                <TextBlock Text="{Binding Mode, Converter={StaticResource ModeIcon}}" FontFamily="{StaticResource Font.Icon}" FontSize="9"
+                                                           VerticalAlignment="Center" Margin="0,0,5,0" />
+                                                <TextBlock Text="{Binding DateLine}" FontSize="11" />
+                                            </StackPanel>
+                                            <ProgressBar Value="{Binding Progress, Mode=OneWay}" Maximum="1" Height="4" Margin="0,4,0,0"
+                                                         Visibility="{Binding HasProgress, Converter={StaticResource VisibleWhen}}" />
+                                        </StackPanel>
+                                    </Border>
+                                </Button>
+                                <DataTemplate.Triggers>
+                                    <DataTrigger Binding="{Binding Status}" Value="Done">
+                                        <Setter TargetName="Badge" Property="Text" Value="{StaticResource Icon.CheckCircle}" />
+                                        <Setter TargetName="Badge" Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding Status}" Value="Failed">
+                                        <Setter TargetName="Badge" Property="Text" Value="{StaticResource Icon.Warning}" />
+                                        <Setter TargetName="Badge" Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding Status}" Value="Queued">
+                                        <Setter TargetName="Badge" Property="Text" Value="{StaticResource Icon.Clock}" />
+                                        <Setter TargetName="Badge" Property="Foreground" Value="{DynamicResource TextMutedBrush}" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding Status}" Value="Transcribing">
+                                        <Setter TargetName="Badge" Property="Text" Value="{StaticResource AIcon.Wave}" />
+                                        <Setter TargetName="Badge" Property="Foreground" Value="{DynamicResource PrimaryBrush}" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding Status}" Value="Recording">
+                                        <Setter TargetName="RecDot" Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding Status}" Value="Recorded">
+                                        <Setter TargetName="Badge" Property="Text" Value="{StaticResource AIcon.Circle}" />
+                                        <Setter TargetName="Badge" Property="Foreground" Value="{DynamicResource TextMutedBrush}" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                        <Setter TargetName="Bd" Property="Background" Value="{DynamicResource PrimaryTint10Brush}" />
+                                        <Setter TargetName="T" Property="FontWeight" Value="SemiBold" />
+                                    </DataTrigger>
+                                    <MultiDataTrigger>
+                                        <MultiDataTrigger.Conditions>
+                                            <Condition Binding="{Binding IsMouseOver, ElementName=Bd}" Value="True" />
+                                            <Condition Binding="{Binding IsSelected}" Value="False" />
+                                        </MultiDataTrigger.Conditions>
+                                        <Setter TargetName="Bd" Property="Background" Value="{DynamicResource HoverBrush}" />
+                                    </MultiDataTrigger>
+                                </DataTemplate.Triggers>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </Grid>
+        </DockPanel>
+    </ui:Card>
+</UserControl>

@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/MeetingAssistant.App/MeetingAssistant.App.csproj" />
+    <Project Path="src/MeetingAssistant.Core/MeetingAssistant.Core.csproj" />
+    <Project Path="src/MeetingAssistant.Platform.Windows/MeetingAssistant.Platform.Windows.csproj" />
+    <Project Path="src/MeetingAssistant.Speech/MeetingAssistant.Speech.csproj" />
+    <Project Path="src/msctl/msctl.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/MeetingAssistant.Core.Tests/MeetingAssistant.Core.Tests.csproj" />
+  </Folder>
+</Solution>

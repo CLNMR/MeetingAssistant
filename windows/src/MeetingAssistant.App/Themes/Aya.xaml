@@ -1,0 +1,78 @@
+<!-- The Aya look (spec 03 §12): metrics, fonts and text styles. Colours live in Colors.Light.xaml /
+     Colors.Dark.xaml and are always referenced with DynamicResource so they follow the Windows appearance.
+     Mac reference: Sources/MeetingAssistant/AyaTheme.swift (enum Aya). Sizes in pt on the Mac = DIP here. -->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=System.Runtime">
+    <ResourceDictionary.MergedDictionaries>
+        <ResourceDictionary Source="Icons.xaml" />
+    </ResourceDictionary.MergedDictionaries>
+
+    <!-- Radii -->
+    <CornerRadius x:Key="Radius.Tag">4</CornerRadius>
+    <CornerRadius x:Key="Radius.ControlSm">6</CornerRadius>
+    <CornerRadius x:Key="Radius.Control">8</CornerRadius>
+    <CornerRadius x:Key="Radius.Container">10</CornerRadius>
+    <CornerRadius x:Key="Radius.Overlay">14</CornerRadius>
+    <CornerRadius x:Key="Radius.Surface">16</CornerRadius>
+    <CornerRadius x:Key="Radius.Pill">999</CornerRadius>
+    <sys:Double x:Key="ControlHeight">32</sys:Double>
+    <sys:Double x:Key="ControlHeightSmall">26</sys:Double>
+    <sys:Double x:Key="ControlHeightLarge">40</sys:Double>
+
+    <!-- Fonts: Segoe UI Variable (Windows 11) with Segoe UI fallback; icons from Segoe Fluent Icons / MDL2 -->
+    <FontFamily x:Key="Font.UI">Segoe UI Variable Text, Segoe UI</FontFamily>
+    <FontFamily x:Key="Font.Display">Segoe UI Variable Display, Segoe UI</FontFamily>
+    <FontFamily x:Key="Font.Icon">Segoe Fluent Icons, Segoe MDL2 Assets</FontFamily>
+    <FontFamily x:Key="Font.Mono">Cascadia Mono, Consolas</FontFamily>
+    <sys:Double x:Key="FontSize.Body">13</sys:Double>
+    <sys:Double x:Key="FontSize.Small">12</sys:Double>
+    <sys:Double x:Key="FontSize.Caption">11</sys:Double>
+
+    <!-- Logo mark (rounded triangle) from the Aya logo SVG; scale with Stretch="Uniform" -->
+    <Geometry x:Key="Geometry.AyaMark">M323.0818,113.0949 l105.2897,210.5788 c29.3945,58.7888 -25.6772,124.2649 -88.6331,105.3781 l-40.636,-12.1908 c-28.1158,-8.4347 -58.0886,-8.4347 -86.2044,0 l-40.6364,12.1909 c-62.9559,18.8868 -118.0275,-46.5891 -88.6332,-105.3779 l105.2893,-210.579 c27.6393,-55.2786 106.5247,-55.2787 134.1641,-0.0001 z</Geometry>
+
+    <!-- Text styles (explicit keys; there is deliberately no implicit TextBlock style) -->
+    <Style x:Key="Aya.Text" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource Font.UI}" />
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+    <Style x:Key="Aya.Text.Muted" TargetType="TextBlock" BasedOn="{StaticResource Aya.Text}">
+        <Setter Property="Foreground" Value="{DynamicResource TextMutedBrush}" />
+    </Style>
+    <Style x:Key="Aya.Text.Caption" TargetType="TextBlock" BasedOn="{StaticResource Aya.Text}">
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="Foreground" Value="{DynamicResource TextSubtleBrush}" />
+    </Style>
+    <Style x:Key="Aya.Text.CaptionMuted" TargetType="TextBlock" BasedOn="{StaticResource Aya.Text}">
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="Foreground" Value="{DynamicResource TextMutedBrush}" />
+    </Style>
+    <!-- Panel titles ("Recordings": 17 semibold) -->
+    <Style x:Key="Aya.Text.Heading" TargetType="TextBlock" BasedOn="{StaticResource Aya.Text}">
+        <Setter Property="FontSize" Value="17" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="TextWrapping" Value="NoWrap" />
+        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+    </Style>
+    <!-- Page titles (PageHeader: 24 semibold, one line) -->
+    <Style x:Key="Aya.Text.Title" TargetType="TextBlock" BasedOn="{StaticResource Aya.Text.Heading}">
+        <Setter Property="FontFamily" Value="{StaticResource Font.Display}" />
+        <Setter Property="FontSize" Value="24" />
+    </Style>
+    <Style x:Key="Aya.Text.Mono" TargetType="TextBlock" BasedOn="{StaticResource Aya.Text}">
+        <Setter Property="FontFamily" Value="{StaticResource Font.Mono}" />
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="Foreground" Value="{DynamicResource TextMutedBrush}" />
+    </Style>
+    <!-- An icon glyph; set Text="{StaticResource Icon.X}" -->
+    <Style x:Key="Aya.Icon" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource Font.Icon}" />
+        <Setter Property="FontSize" Value="14" />
+        <Setter Property="Foreground" Value="{DynamicResource TextMutedBrush}" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="TextAlignment" Value="Center" />
+    </Style>
+</ResourceDictionary>

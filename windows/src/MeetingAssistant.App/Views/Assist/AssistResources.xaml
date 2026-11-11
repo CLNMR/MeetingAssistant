@@ -1,0 +1,172 @@
+<!-- Shared resources of the Assist screens: converters, extra icon glyphs, the highlight fade, avatars, chips
+     and section texts (spec 03 §3, §12). Merged into each Assist view's Resources. -->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=System.Runtime"
+                    xmlns:ui="clr-namespace:MeetingAssistant.App.Controls"
+                    xmlns:v="clr-namespace:MeetingAssistant.App.Views">
+    <v:StepKindConverter x:Key="StepKind" />
+    <v:SpeakerBrushConverter x:Key="SpeakerBrush" />
+    <v:ModeIconConverter x:Key="ModeIcon" />
+    <v:FractionOfConverter x:Key="FractionOf" />
+    <BooleanToVisibilityConverter x:Key="BoolVis" />
+
+    <!-- Glyphs not in Themes/Icons.xaml (Segoe Fluent Icons / MDL2). -->
+    <sys:String x:Key="AIcon.Circle">&#xE91F;</sys:String>
+    <sys:String x:Key="AIcon.HalfCircle">&#xEA3A;</sys:String>
+    <sys:String x:Key="AIcon.PauseCircle">&#xE769;</sys:String>
+    <sys:String x:Key="AIcon.Forward">&#xE72A;</sys:String>
+    <sys:String x:Key="AIcon.Upload">&#xE898;</sys:String>
+    <sys:String x:Key="AIcon.Key">&#xE8D7;</sys:String>
+    <sys:String x:Key="AIcon.Minus">&#xE738;</sys:String>
+    <sys:String x:Key="AIcon.External">&#xE8A7;</sys:String>
+    <sys:String x:Key="AIcon.Chat">&#xE8F2;</sys:String>
+    <sys:String x:Key="AIcon.Wave">&#xE767;</sys:String>
+
+    <!-- Brief agent 16 % background on items the latest update changed; fades out over 0.6 s (spec 03 §3 "Highlight").
+         Put it behind the content (Grid) with DataContext items that have IsChanged. -->
+    <Style x:Key="Assist.Highlight" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource AgentHighlightBrush}" />
+        <Setter Property="CornerRadius" Value="6" />
+        <Setter Property="Margin" Value="-5,-2" />
+        <Setter Property="Opacity" Value="0" />
+        <Setter Property="IsHitTestVisible" Value="False" />
+        <Style.Triggers>
+            <DataTrigger Binding="{Binding IsChanged}" Value="True">
+                <DataTrigger.EnterActions>
+                    <BeginStoryboard>
+                        <Storyboard>
+                            <DoubleAnimation Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0" />
+                        </Storyboard>
+                    </BeginStoryboard>
+                </DataTrigger.EnterActions>
+                <DataTrigger.ExitActions>
+                    <BeginStoryboard>
+                        <Storyboard>
+                            <DoubleAnimation Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.6">
+                                <DoubleAnimation.EasingFunction>
+                                    <QuadraticEase EasingMode="EaseOut" />
+                                </DoubleAnimation.EasingFunction>
+                            </DoubleAnimation>
+                        </Storyboard>
+                    </BeginStoryboard>
+                </DataTrigger.ExitActions>
+            </DataTrigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- Section title / subtitle in review cards. -->
+    <Style x:Key="Assist.SectionTitle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="16" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+    </Style>
+    <Style x:Key="Assist.Subtitle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Foreground" Value="{DynamicResource TextMutedBrush}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+        <Setter Property="Margin" Value="0,2,0,0" />
+    </Style>
+    <Style x:Key="Assist.Caption" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="Foreground" Value="{DynamicResource TextSubtleBrush}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <!-- A borderless button around custom content (rows, chips, cards). -->
+    <Style x:Key="Assist.PlainButton" TargetType="ButtonBase">
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Focusable" Value="True" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ButtonBase">
+                    <Border Background="{TemplateBinding Background}">
+                        <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                          VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.45" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Attendee chip (live and review): capsule, 20 px initial circle (teal when known in Aya), name, role, "= label". -->
+    <DataTemplate x:Key="Assist.AttendeeChip">
+        <Grid>
+            <Border Style="{StaticResource Assist.Highlight}" CornerRadius="999" />
+            <Button Style="{StaticResource Assist.PlainButton}" Tag="person" ToolTip="{Binding Tooltip}"
+                    AutomationProperties.Name="{Binding Name}">
+                <Border x:Name="Chip" CornerRadius="999" BorderThickness="1" Padding="3,3,10,3"
+                        Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource BorderBrush}">
+                    <StackPanel Orientation="Horizontal">
+                        <Border x:Name="Dot" Width="20" Height="20" CornerRadius="10" Background="{DynamicResource PrimaryTint12Brush}"
+                                ToolTip="{Binding KnownTooltip}">
+                            <TextBlock x:Name="Ini" Text="{Binding Initial}" FontSize="10" FontWeight="SemiBold" HorizontalAlignment="Center"
+                                       VerticalAlignment="Center" Foreground="{DynamicResource PrimaryBrush}" />
+                        </Border>
+                        <TextBlock Text="{Binding Name}" FontSize="12" FontWeight="Medium" Margin="5,0,0,0" VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding Role}" FontSize="12" Margin="5,0,0,0" VerticalAlignment="Center"
+                                   Foreground="{DynamicResource TextMutedBrush}" Visibility="{Binding Role, Converter={StaticResource VisibleWhen}}" />
+                        <TextBlock Text="{Binding SpeakerSuffix}" FontSize="12" Margin="5,0,0,0" VerticalAlignment="Center"
+                                   Foreground="{DynamicResource TextSubtleBrush}" Visibility="{Binding SpeakerSuffix, Converter={StaticResource VisibleWhen}}" />
+                    </StackPanel>
+                </Border>
+            </Button>
+        </Grid>
+        <DataTemplate.Triggers>
+            <DataTrigger Binding="{Binding IsKnown}" Value="True">
+                <Setter TargetName="Dot" Property="Background" Value="{DynamicResource AgentBrush}" />
+                <Setter TargetName="Ini" Property="Foreground" Value="{DynamicResource AgentForegroundBrush}" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding Dim}" Value="True">
+                <Setter TargetName="Chip" Property="Opacity" Value="0.6" />
+            </DataTrigger>
+        </DataTemplate.Triggers>
+    </DataTemplate>
+
+    <!-- Summary paragraph with the bold topic. -->
+    <DataTemplate x:Key="Assist.SummaryParagraph">
+        <Grid Margin="0,0,0,10">
+            <Border Style="{StaticResource Assist.Highlight}" />
+            <TextBlock FontSize="13" TextWrapping="Wrap" Foreground="{DynamicResource TextBrush}">
+                <Run x:Name="Topic" Text="{Binding Topic, Mode=OneWay}" FontWeight="SemiBold" /><Run x:Name="Colon" Text=": " FontWeight="SemiBold" /><Run Text="{Binding Body, Mode=OneWay}" />
+            </TextBlock>
+        </Grid>
+        <DataTemplate.Triggers>
+            <DataTrigger Binding="{Binding Topic}" Value="{x:Null}">
+                <Setter TargetName="Colon" Property="Text" Value="" />
+            </DataTrigger>
+        </DataTemplate.Triggers>
+    </DataTemplate>
+
+    <!-- Table header (spec 03 §6.5 sheet, §8.3): name, "N/M answered", "Only answered rows", the prompt. DataContext: TableGridViewModel. -->
+    <DataTemplate x:Key="Assist.TableHeader">
+        <StackPanel>
+            <DockPanel>
+                <CheckBox DockPanel.Dock="Right" Content="Only answered rows" FontSize="12" IsChecked="{Binding OnlyAnswered}" VerticalAlignment="Center" />
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="{Binding Name}" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center" />
+                    <ui:AyaTag Text="{Binding AnsweredText}" Tint="{DynamicResource AgentTextMidBrush}" Margin="8,0,0,0" VerticalAlignment="Center" />
+                </StackPanel>
+            </DockPanel>
+            <TextBlock Text="{Binding Prompt}" FontSize="12" Foreground="{DynamicResource TextMutedBrush}" TextWrapping="Wrap" Margin="0,4,0,0"
+                       Visibility="{Binding Prompt, Converter={StaticResource VisibleWhen}}" />
+        </StackPanel>
+    </DataTemplate>
+
+    <!-- Wrapping chip layout (spec 03 §3 "FlowLayout": 6 px spacing). -->
+    <ItemsPanelTemplate x:Key="Assist.Flow">
+        <WrapPanel Orientation="Horizontal" />
+    </ItemsPanelTemplate>
+    <ItemsPanelTemplate x:Key="Assist.Row">
+        <StackPanel Orientation="Horizontal" />
+    </ItemsPanelTemplate>
+</ResourceDictionary>

@@ -1,0 +1,14 @@
+<!-- Modal alert in the Aya style (global error alert, delete confirmations). -->
+<Window x:Class="MeetingAssistant.App.Shell.AlertWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Style="{StaticResource Aya.Window}"
+        Width="420" SizeToContent="Height" ResizeMode="NoResize" ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner">
+    <StackPanel Margin="20">
+        <TextBlock x:Name="Heading" Style="{StaticResource Aya.Text}" FontSize="15" FontWeight="SemiBold" />
+        <TextBox x:Name="Message" Style="{StaticResource Aya.SelectableText}" Margin="0,8,0,0"
+                 Foreground="{DynamicResource TextMutedBrush}" />
+        <StackPanel x:Name="Buttons" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0" />
+    </StackPanel>
+</Window>

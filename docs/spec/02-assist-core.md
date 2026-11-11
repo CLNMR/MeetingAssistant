@@ -1128,3 +1128,11 @@ Value → text, used for `old`/`value` and the prompts (`JSONValue.description`)
 | `assist crm <session> [--record file]` | print the CRM proposal |
 
 Exit code 1 with `error: <message>` on stderr on failure.
+
+### Windows implementation
+
+- **Claude binary lookup (Windows):** the configured path, `%USERPROFILE%\.local\bin\claude.exe`, `%USERPROFILE%\.claude\local\claude.exe`, `%LOCALAPPDATA%\Programs\claude\claude.exe`, WinGet Links, `claude.exe` on PATH, then `%APPDATA%\npm\claude.cmd` and `claude.cmd` on PATH. A `.cmd` from npm runs `node cli.js` directly when the script is next to it (no `cmd.exe` quoting). `%APPDATA%\npm` is added to PATH for the child.
+- **Aya key:** Windows Credential Manager, target `MeetingAssistant/aya-api-key`.
+- **Preferences:** `aya.config.v2` and `assist.settings.v1` are JSON strings in `<root>/preferences.json`.
+- **Deadline check:** where several time words match a prefix, the longest match wins (on the Mac the order of a dictionary decided, e.g. "wochenende…" could map to week or weekend).
+- **Wording:** "on this PC" where the Mac says "on this Mac".

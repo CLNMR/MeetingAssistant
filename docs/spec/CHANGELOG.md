@@ -10,6 +10,13 @@ What changed for the user, in one to three sentences.
 Sections: 01-recording (Live transcription), 03-assist-ui (Review)
 ```
 
+## 2026-11-11: Windows app, and spec corrections found while building it
+The Windows app (`windows/`) was built from the whole spec. No behaviour of the Mac app changed; the spec now states details the port needed.
+- JSON rules: string escaping (`/` as `\/` in files), number and empty-array format.
+- "Waiting to be transcribed…" shows only while queued; the Unfinished Dictations label is `<short time> · <mm:ss>`; the vocabulary refreshes on a version change even with Aya names off; not every dictation writes a log line; the speaker-colour hash start value; times use `clock(t)`.
+- A "Windows implementation" section at the end of each section file.
+Sections: README (Architecture), 01-recording (JSON encoding rules, Scribe window, Speaker colours, Windows implementation), 02-assist-core (Windows implementation), 03-assist-ui (Live, Meetings, Speaker colour, Windows implementation), 04-dictation-settings (1.4, 1.8, 5.1, Windows implementation)
+
 ## 2026-11-10: Fixes from the spec review
 Problems found while writing the spec are fixed.
 

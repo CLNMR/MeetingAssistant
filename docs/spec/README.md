@@ -69,8 +69,9 @@ A vocabulary (names from Aya plus the user's own terms) fixes spelling in dictat
   - Speaker separation: NVIDIA Nemotron 3 Diarization (offline and streaming).
   - Speaker embeddings: CAM++.
 
-  On the Mac they run on the Neural Engine and GPU through FluidAudio and speech-swift. On Windows the same model families are available as ONNX (via sherpa-onnx).
+  On the Mac they run on the Neural Engine and GPU through FluidAudio and speech-swift. On Windows the same model families run as ONNX through sherpa-onnx on the CPU (see the "Windows implementation" notes at the end of each section).
 - **Data on disk:** all data lives in one app data folder: sessions, dictations, vocabulary, speaker library, voiceprint and Aya cache. It is described in 01-recording and 04-dictation-settings. Files are JSON. A port must keep the same formats so the two apps can share test fixtures.
+- **Windows app:** `windows/` is a .NET 10 solution built from this spec: `MeetingAssistant.Core` (cross-platform logic, the counterpart of the Mac core library), `MeetingAssistant.Speech` (sherpa-onnx), `MeetingAssistant.Platform.Windows` (WASAPI, hotkeys, paste, UI Automation, Credential Manager), `MeetingAssistant.App` (WPF), `msctl` and xUnit tests. Core, Speech and msctl also run on macOS, so most of it is tested on the Mac.
 - **Command-line tool:** `msctl` runs most features headless for testing (record, import, transcribe, live test, Assist replay, Aya).
 
 ## Terms

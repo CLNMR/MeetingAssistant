@@ -1,0 +1,180 @@
+<!-- Scribe mode (spec 01 "Scribe window, menus and shortcuts"): recordings panel (290 px) + 8 px gap + main
+     area (recorder or session detail) on a surface card clipped to radius 16. -->
+<UserControl x:Class="MeetingAssistant.App.Views.ScribeView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="clr-namespace:MeetingAssistant.App.Controls"
+             xmlns:vm="clr-namespace:MeetingAssistant.App.ViewModels">
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="290" />
+            <ColumnDefinition Width="8" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <!-- Recordings panel -->
+        <ui:Card Padding="14">
+            <DockPanel>
+                <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
+                    <Button DockPanel.Dock="Right" Style="{StaticResource Aya.IconButton}" ui:Ui.Icon="{StaticResource Icon.Import}"
+                            Command="{Binding DataContext.ImportAudioCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                            ToolTip="Transcribe an existing audio file (Ctrl+I)" AutomationProperties.Name="Import Audio" />
+                    <TextBlock Style="{StaticResource Aya.Text.Heading}" Text="Recordings" VerticalAlignment="Center" />
+                </DockPanel>
+
+                <!-- "New Recording" row: selects the recorder; shows the shortcut or the running recording -->
+                <Button DockPanel.Dock="Top" Margin="0,0,0,10" Height="Auto" Padding="10,8" HorizontalContentAlignment="Stretch"
+                        Command="{Binding ShowRecorderCommand}">
+                    <Button.Style>
+                        <Style TargetType="Button" BasedOn="{StaticResource Aya.Button}">
+                            <Setter Property="Background" Value="Transparent" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SelectedSession}" Value="{x:Null}">
+                                    <Setter Property="Background" Value="{DynamicResource MutedBrush}" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Button.Style>
+                    <StackPanel Orientation="Horizontal">
+                        <Border Width="28" Height="28" CornerRadius="14">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Background" Value="{DynamicResource PrimaryBrush}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Controller.IsRecording}" Value="True">
+                                            <Setter Property="Background" Value="{DynamicResource RecordingBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <TextBlock FontSize="12" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource Aya.Icon}">
+                                        <Setter Property="Text" Value="{StaticResource Icon.Add}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Controller.IsRecording}" Value="True">
+                                                <Setter Property="Text" Value="{StaticResource Icon.Scribe}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Border>
+                        <StackPanel Margin="10,0,0,0" VerticalAlignment="Center">
+                            <TextBlock FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource TextBrush}">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="New Recording" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Controller.IsRecording}" Value="True">
+                                                <Setter Property="Text" Value="Recording…" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                            <TextBlock FontSize="11" Foreground="{DynamicResource TextMutedBrush}">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Ctrl+Shift+R" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Controller.IsRecording}" Value="True">
+                                                <Setter Property="Text" Value="{Binding RecordingRowText}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                    </StackPanel>
+                </Button>
+
+                <TextBox DockPanel.Dock="Top" Style="{StaticResource Aya.SearchBox}" Margin="0,0,0,10"
+                         Text="{Binding Filter, UpdateSourceTrigger=PropertyChanged}" />
+
+                <Grid>
+                    <ListBox x:Name="List" ItemsSource="{Binding Visible}" SelectedItem="{Binding SelectedSession}"
+                             VirtualizingPanel.IsVirtualizing="True" HorizontalContentAlignment="Stretch">
+                        <ListBox.ItemContainerStyle>
+                            <Style TargetType="ListBoxItem" BasedOn="{StaticResource Aya.ListItem}">
+                                <Setter Property="ContextMenu">
+                                    <Setter.Value>
+                                        <ContextMenu>
+                                            <MenuItem Header="Transcribe Again"
+                                                      Command="{Binding PlacementTarget.Tag.TranscribeAgainCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                      CommandParameter="{Binding}" ui:Ui.Icon="{StaticResource Icon.Refresh}" />
+                                            <MenuItem Header="Show in Explorer"
+                                                      Command="{Binding PlacementTarget.Tag.ShowInExplorerCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                      CommandParameter="{Binding}" ui:Ui.Icon="{StaticResource Icon.Folder}" />
+                                            <Separator />
+                                            <MenuItem Header="Delete…" IsEnabled="{Binding CanDelete}"
+                                                      Command="{Binding PlacementTarget.Tag.DeleteCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                      CommandParameter="{Binding}" ui:Ui.Icon="{StaticResource Icon.Delete}" />
+                                        </ContextMenu>
+                                    </Setter.Value>
+                                </Setter>
+                                <Setter Property="Tag" Value="{Binding DataContext, RelativeSource={RelativeSource AncestorType=ListBox}}" />
+                            </Style>
+                        </ListBox.ItemContainerStyle>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate DataType="{x:Type vm:SessionRowViewModel}">
+                                <StackPanel>
+                                    <DockPanel>
+                                        <TextBlock DockPanel.Dock="Right" x:Name="Badge" FontSize="11" Margin="4,0,0,0" VerticalAlignment="Center"
+                                                   Style="{StaticResource Aya.Icon}" Text="{StaticResource Icon.CheckCircle}"
+                                                   Foreground="{DynamicResource SuccessBrush}" ToolTip="Transcribed" />
+                                        <TextBlock Text="{Binding Title}" FontSize="13" FontWeight="Medium" TextTrimming="CharacterEllipsis"
+                                                   Foreground="{DynamicResource TextBrush}" />
+                                    </DockPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,3,0,0">
+                                        <TextBlock Style="{StaticResource Aya.Icon}" Text="{Binding ModeIcon}" FontSize="9"
+                                                   Foreground="{DynamicResource TextMutedBrush}" VerticalAlignment="Center" Margin="0,0,5,0" />
+                                        <TextBlock FontSize="11" Foreground="{DynamicResource TextMutedBrush}" Text="{Binding Subtitle}" />
+                                    </StackPanel>
+                                    <ProgressBar Margin="0,5,0,0" Maximum="1" Value="{Binding ProgressValue, Mode=OneWay}"
+                                                 Foreground="{DynamicResource PrimaryBrush}"
+                                                 Visibility="{Binding HasProgress, Converter={StaticResource VisibleWhen}}" />
+                                </StackPanel>
+                                <DataTemplate.Triggers>
+                                    <DataTrigger Binding="{Binding Status}" Value="Failed">
+                                        <Setter TargetName="Badge" Property="Text" Value="{StaticResource Icon.Warning}" />
+                                        <Setter TargetName="Badge" Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                        <Setter TargetName="Badge" Property="ToolTip" Value="Transcription failed" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding Status}" Value="Queued">
+                                        <Setter TargetName="Badge" Property="Text" Value="{StaticResource Icon.Clock}" />
+                                        <Setter TargetName="Badge" Property="Foreground" Value="{DynamicResource TextSubtleBrush}" />
+                                        <Setter TargetName="Badge" Property="ToolTip" Value="Waiting to be transcribed" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding Status}" Value="Transcribing">
+                                        <Setter TargetName="Badge" Property="Text" Value="{StaticResource Icon.Scribe}" />
+                                        <Setter TargetName="Badge" Property="Foreground" Value="{DynamicResource PrimaryBrush}" />
+                                        <Setter TargetName="Badge" Property="ToolTip" Value="Transcribing" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding Status}" Value="Recording">
+                                        <Setter TargetName="Badge" Property="Text" Value="{StaticResource Icon.Record}" />
+                                        <Setter TargetName="Badge" Property="Foreground" Value="{DynamicResource RecordingBrush}" />
+                                        <Setter TargetName="Badge" Property="ToolTip" Value="Recording" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding Status}" Value="Recorded">
+                                        <Setter TargetName="Badge" Property="Text" Value="{StaticResource Icon.History}" />
+                                        <Setter TargetName="Badge" Property="Foreground" Value="{DynamicResource TextSubtleBrush}" />
+                                        <Setter TargetName="Badge" Property="ToolTip" Value="Not transcribed yet" />
+                                    </DataTrigger>
+                                </DataTemplate.Triggers>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                    <TextBlock Style="{StaticResource Aya.Text.Muted}" Text="{Binding EmptyText}" HorizontalAlignment="Center"
+                               Margin="0,20,0,0" VerticalAlignment="Top"
+                               Visibility="{Binding IsEmpty, Converter={StaticResource VisibleWhen}}" />
+                </Grid>
+            </DockPanel>
+        </ui:Card>
+
+        <!-- Main area -->
+        <ui:Card Grid.Column="2" ClipToBounds="True" Padding="0">
+            <ContentControl Content="{Binding Detail}" Focusable="False" />
+        </ui:Card>
+    </Grid>
+</UserControl>

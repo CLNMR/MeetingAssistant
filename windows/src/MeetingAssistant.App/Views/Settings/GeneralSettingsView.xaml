@@ -1,0 +1,63 @@
+<!-- Settings › General (spec 04 §6.1). -->
+<UserControl x:Class="MeetingAssistant.App.Views.GeneralSettingsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="clr-namespace:MeetingAssistant.App.Controls"
+             xmlns:vm="clr-namespace:MeetingAssistant.App.ViewModels">
+    <UserControl.DataContext>
+        <vm:GeneralSettingsViewModel />
+    </UserControl.DataContext>
+    <StackPanel Margin="20">
+        <ui:Card Padding="16,6">
+            <StackPanel>
+                <DockPanel Margin="0,8">
+                    <TextBox DockPanel.Dock="Right" Width="240" Text="{Binding MyName, UpdateSourceTrigger=PropertyChanged, Delay=400}" ui:Ui.Placeholder="Me" />
+                    <TextBlock Style="{StaticResource Aya.Text}" Text="Your name" VerticalAlignment="Center" />
+                </DockPanel>
+                <Border Height="1" Background="{DynamicResource BorderBrush}" />
+                <DockPanel Margin="0,8">
+                    <ComboBox DockPanel.Dock="Right" Width="240" ItemsSource="{Binding Modes}" DisplayMemberPath="Title"
+                              SelectedValuePath="Value" SelectedValue="{Binding DefaultMode}" />
+                    <TextBlock Style="{StaticResource Aya.Text}" Text="Default meeting type" VerticalAlignment="Center" />
+                </DockPanel>
+                <Border Height="1" Background="{DynamicResource BorderBrush}" />
+                <DockPanel Margin="0,8">
+                    <ComboBox DockPanel.Dock="Right" Width="240" ItemsSource="{Binding Devices}" DisplayMemberPath="Title"
+                              SelectedValuePath="Value" SelectedValue="{Binding InputDevice}" DropDownOpened="Devices_DropDownOpened" />
+                    <TextBlock Style="{StaticResource Aya.Text}" Text="Microphone" VerticalAlignment="Center" />
+                </DockPanel>
+                <Border Height="1" Background="{DynamicResource BorderBrush}" />
+                <ToggleButton Style="{StaticResource Aya.Switch}" Margin="0,8" IsChecked="{Binding LiveTranscription}">
+                    <TextBlock Style="{StaticResource Aya.Text}" Text="Show live transcript while recording" />
+                </ToggleButton>
+                <Border Height="1" Background="{DynamicResource BorderBrush}" />
+                <ToggleButton Style="{StaticResource Aya.Switch}" Margin="0,8" IsChecked="{Binding AutoTranscribe}">
+                    <TextBlock Style="{StaticResource Aya.Text}" Text="Create full transcript automatically after recording" />
+                </ToggleButton>
+            </StackPanel>
+        </ui:Card>
+
+        <ui:Card Padding="16,6" Margin="0,14,0,0">
+            <StackPanel>
+                <DockPanel Margin="0,8">
+                    <ComboBox DockPanel.Dock="Right" Width="300" ItemsSource="{Binding Engines}" DisplayMemberPath="Title"
+                              SelectedValuePath="Value" SelectedValue="{Binding Engine}" />
+                    <TextBlock Style="{StaticResource Aya.Text}" Text="Transcription engine" VerticalAlignment="Center" />
+                </DockPanel>
+                <Border Height="1" Background="{DynamicResource BorderBrush}" />
+                <DockPanel Margin="0,8,0,4">
+                    <ComboBox DockPanel.Dock="Right" Width="240" ItemsSource="{Binding Languages}" DisplayMemberPath="Title"
+                              SelectedValuePath="Value" SelectedValue="{Binding Language}" />
+                    <TextBlock Style="{StaticResource Aya.Text}" Text="Language" VerticalAlignment="Center" />
+                </DockPanel>
+                <TextBlock Style="{StaticResource Aya.Text.CaptionMuted}" Margin="0,0,0,8" TextWrapping="Wrap"
+                           Text="“Automatic” handles meetings that switch between German and English." />
+                <Border Height="1" Background="{DynamicResource BorderBrush}" />
+                <DockPanel Margin="0,8">
+                    <Button DockPanel.Dock="Right" Content="Show in Explorer" Command="{Binding ShowRecordingsCommand}" />
+                    <TextBlock Style="{StaticResource Aya.Text}" Text="Recordings folder" VerticalAlignment="Center" />
+                </DockPanel>
+            </StackPanel>
+        </ui:Card>
+    </StackPanel>
+</UserControl>

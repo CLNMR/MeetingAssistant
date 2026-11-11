@@ -1,0 +1,18 @@
+<!-- Assist mode layout (spec 03 §2): [Meetings panel 270] 8 [Router clipped to radius 16], or the router alone
+     while a meeting runs or before Aya is connected. -->
+<UserControl x:Class="MeetingAssistant.App.Views.AssistView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="clr-namespace:MeetingAssistant.App.Controls">
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+        <ContentControl Width="270" Margin="0,0,8,0" Content="{Binding Meetings}" Focusable="False"
+                        Visibility="{Binding ShowMeetingsPanel, Converter={StaticResource VisibleWhen}}" />
+        <Border Grid.Column="1" x:Name="RouterHost" CornerRadius="16" ClipToBounds="True">
+            <ContentControl Content="{Binding Router}" Focusable="False" />
+        </Border>
+    </Grid>
+</UserControl>

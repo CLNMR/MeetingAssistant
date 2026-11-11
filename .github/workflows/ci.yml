@@ -31,3 +31,27 @@ jobs:
           if git grep -nE 'aya_key_[A-Za-z0-9]{20,}|sk-ant-[A-Za-z0-9-]{20,}' -- ':!*.md'; then
             echo "Possible API key in the repository"; exit 1
           fi
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: windows/global.json
+      - name: Build
+        run: dotnet build windows/MeetingAssistant.slnx -c Release
+      - name: Test
+        run: dotnet test windows/tests/MeetingAssistant.Core.Tests -c Release --no-build
+
+  windows-core-on-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: windows/global.json
+      - name: Test the cross-platform core
+        run: dotnet test windows/tests/MeetingAssistant.Core.Tests

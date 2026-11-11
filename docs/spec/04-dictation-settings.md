@@ -79,7 +79,7 @@ On release (only if phase is `listening`):
    i. If *Fit spaces and capitals* is on and the field's `before` text is known: `text = InsertionFit.fit(text, before, after ?? "")` (section 3.3).
    j. Deliver (section 3.1). After a successful hand-off to paste/copy, delete the recovery file.
 
-7. Every dictation writes one log line (see 1.9).
+7. Every dictation that gets past the tap and accidental-press filters writes one log line (see 1.9).
 
 #### 1.5 Dictation ASR
 
@@ -121,7 +121,7 @@ On release (only if phase is `listening`):
   - **Recovery files**: audio saved before transcription so a failure or crash loses nothing.
 - Recovery folder `<AppData>/Dictations/`, excluded from backups (Time Machine). File name `dictation-<milliseconds since 1970>.caf`, with the suffix `-plus` (`dictation-<ms>-plus.caf`) for a Scribe+ dictation (16 kHz mono float32 CAF). The timestamp in the name is the recording date; parsing takes the number before the first `-` after `dictation-`, so older files without a suffix read as plain.
 - Deleted when: the text was delivered; ASR returned empty/invented text; the user deletes it; or it is older than **24 h** (pruned whenever the list is read: at launch, when the menu opens, after a failure).
-- Menu bar: `Unfinished Dictations (N)` → per item, label `<time> · <m:ss>` (date added if not today) → `Transcribe Again and Copy` / `Delete`.
+- Menu bar: `Unfinished Dictations (N)` → per item, label `<short time> · <mm:ss>` (the short date added if not today) → `Transcribe Again and Copy` / `Delete`.
 - *Transcribe Again and Copy* (ignored while a dictation is listening or transcribing): HUD shows `Transcribing the kept dictation…`; ASR → the same text processing as a normal dictation: invented-text check (voiced run computed from the kept audio) → vocabulary → spoken forms → for a `-plus` file Scribe+ (section 2) **without** app name or cursor context (the original field is gone; Claude must be available, else the 2.6 fallback). **No** fit. The result is **copied only** (never pasted: the cursor is no longer where the dictation started), `lastText` set, file deleted. Toast `Copied (not pasted) – paste with ⌘V`; if Scribe+ fell back, the 2.6 note with "pasted" replaced by "copied" plus `. Paste with ⌘V.` (e.g. `Scribe+ failed – copied word for word. Paste with ⌘V.`). Empty or invented result → file deleted, toast `No speech in that recording`. ASR error → toast `Transcription failed again` (file kept).
 
 **Windows notes:** store under `%LOCALAPPDATA%\MeetingAssistant\Dictations\` (Local, not Roaming, so it is not synced). WAV (float32 or PCM16) is an acceptable replacement for CAF if both platforms need not exchange files; keep the name pattern.
@@ -384,7 +384,7 @@ Names and terms spelled the user's way, applied to **dictations** (text) and **f
    - Projects: parts with ≤ 3 words.
    - Final filter: letter key (see 5.3) ≥ 3 characters, ≤ 4 words, no `@`, de-duplicated by letter key (first wins).
    - Example: companies `Muster Metallbau GmbH & Co. KG`, `Beispiel AG`; people `Erika Musterfrau`; projects `ERP Einführung`, `A very long project name here` → `Muster Metallbau, Beispiel, Erika Musterfrau, Musterfrau, ERP Einführung`.
-   - **Refresh**: after the Aya lists are loaded, if *Use names from Aya* is on and (last fetch > **12 h** ago, or the stored `ayaTermsVersion` ≠ current version **2**). Also the *Refresh* button (enabled only when Aya is connected). The contacts list is fetched for this. An empty result does not overwrite the stored terms.
+   - **Refresh**: after the Aya lists are loaded, if (*Use names from Aya* is on and the last fetch is > **12 h** ago) or the stored `ayaTermsVersion` ≠ current version **2** (a version change refreshes even with the toggle off). Also the *Refresh* button (enabled only when Aya is connected). The contacts list is fetched for this. An empty result does not overwrite the stored terms.
    - Active terms = your terms + (Aya terms if enabled).
 
 #### 5.2 Storage: `vocabulary.json`
@@ -626,3 +626,20 @@ On push to `main` and on pull requests; `macos-15` runner, 45-minute timeout: se
 - **No toggle mode, no spoken punctuation commands, no persistent dictation history.** Not bugs; if the Windows brief expects these, they are new features, not ports.
 - **Identifiers keep the old name** `de.local.MeetingScribe` (Logger subsystem, defaults domain, bundle id) on purpose, for migration. The Windows port should pick its own stable identifiers once and never change them.
 - **Toast texts say `⌘V`** on the Mac; the Windows port uses `Ctrl+V`.
+
+### Windows implementation
+
+- **Shortcuts:** stored in the Mac JSON shape with Windows virtual-key codes and `"platform":"windows"`. Defaults: **Right Ctrl** (word for word) and **Right Ctrl + Right Shift** (Scribe+); Right Alt is AltGr on European layouts. Display names like "Right Ctrl + Right Shift", "Ctrl+Alt+Space". F1–F24 are allowed. Implemented with a low-level keyboard hook; AltGr's fake Left Ctrl (scan code 0x21D) is ignored. When a shortcut with Alt or Win fires, the unused key 0xE8 is sent so releasing Alt does not open a menu bar and releasing Win does not open Start.
+- **Paste:** clipboard plus `SendInput` Ctrl+V; the text stays on the clipboard (as on the Mac). Extra toasts: "Copied – that window runs as administrator. Paste with Ctrl+V." and a clipboard failure toast. Wording uses "Ctrl+V", "tray menu", "Settings › Privacy".
+- **Focused field:** UI Automation. Text around the cursor is read by moving the selection's ends 2,000 characters back and 600 forward; password fields (`IsPassword`) are never read; 0.25 s timeouts.
+- **Muting:** Core Audio endpoint/session volumes, restored exactly.
+- **Spell checker** (vocabulary sound-alike rule): the Windows spell checking API with de-DE and en-US; without dictionaries the rule must not run on ordinary words.
+- **Dictation recovery files** keep the Mac format (Float32 CAF, audio at byte 4096).
+- **Scribe+ timeout** shows "Claude failed: Claude took too long".
+- **Preferences:** one file, `<root>/preferences.json`, holding all Mac user-defaults keys.
+- **Microphone access:** Windows has no "not determined" state; blocked access gives `No microphone access (Settings › Privacy)`. Settings › Dictation shows a Microphone row (Allowed / `Allow…`) instead of the Mac's permission section.
+- **Clipboard failure:** the recovery file is kept and `Could not use the clipboard – try again` is shown (the Mac always deletes the file after the hand-off).
+- **Log:** `<root>\Logs\dictation.log`, rotated at 1 MB. Taps and accidental presses write no log line (as on the Mac); extra lines for `microphone failed`, `paste failed`, `retry failed`.
+- **Spare process:** reads the settings when its timer fires. The 8 s Scribe+ timeout is enforced by the controller, with a 10 s backstop in the session.
+- A shortcut stored with Mac key codes is read as the Windows default.
+- **msctl dictate** `<audio> [--plus] [--runs N] [--direct] [--before/--after/--app] [--model] [--no-context] [--cold]` runs the dictation controller on a file and prints what would be pasted.

@@ -1,0 +1,94 @@
+<!-- Main window (spec 03 §1): edge-to-edge content with a custom title bar, min 980 x 620, page background,
+     [Rail 48] 8 [mode content]; content padding 8 left/right/bottom. The Windows caption buttons take a
+     32 px strip at the top (the Mac content runs under its traffic lights instead). -->
+<Window x:Class="MeetingAssistant.App.Shell.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="clr-namespace:MeetingAssistant.App.Controls"
+        Style="{StaticResource Aya.Window}"
+        Title="MeetingAssistant" Icon="/Assets/AppIcon.ico"
+        Width="1280" Height="800" MinWidth="980" MinHeight="620"
+        WindowStartupLocation="CenterScreen">
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="32" ResizeBorderThickness="6" GlassFrameThickness="0,0,0,1"
+                      CornerRadius="0" UseAeroCaptionButtons="False" />
+    </WindowChrome.WindowChrome>
+
+    <Window.InputBindings>
+        <KeyBinding Modifiers="Ctrl" Key="D1" Command="{Binding ShowScribeCommand}" />
+        <KeyBinding Modifiers="Ctrl" Key="NumPad1" Command="{Binding ShowScribeCommand}" />
+        <KeyBinding Modifiers="Ctrl" Key="D2" Command="{Binding ShowAssistCommand}" />
+        <KeyBinding Modifiers="Ctrl" Key="NumPad2" Command="{Binding ShowAssistCommand}" />
+        <KeyBinding Modifiers="Ctrl+Shift" Key="R" Command="{Binding ToggleRecordingCommand}" />
+        <KeyBinding Modifiers="Ctrl" Key="I" Command="{Binding ImportAudioCommand}" />
+        <KeyBinding Modifiers="Ctrl+Shift" Key="L" Command="{Binding ToggleFloatingCommand}" />
+        <KeyBinding Modifiers="Ctrl" Key="OemComma" Command="{Binding OpenSettingsCommand}" />
+        <KeyBinding Modifiers="Ctrl+Shift" Key="Space" Command="{Binding SuggestNowCommand}" />
+    </Window.InputBindings>
+
+    <Grid x:Name="Root">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="32" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Caption strip: drag area (WindowChrome) and the caption buttons -->
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top">
+            <Button Style="{StaticResource Aya.CaptionButton}" Content="{StaticResource Icon.Minimize}" Click="Minimize_Click"
+                    AutomationProperties.Name="Minimize" />
+            <Button x:Name="MaxButton" Style="{StaticResource Aya.CaptionButton}" Content="{StaticResource Icon.Maximize}" Click="Maximize_Click"
+                    AutomationProperties.Name="Maximize" />
+            <Button Style="{StaticResource Aya.CaptionButton.Close}" Content="{StaticResource Icon.ChromeClose}" Click="Close_Click"
+                    AutomationProperties.Name="Close" />
+        </StackPanel>
+
+        <Grid Grid.Row="1" Margin="8,0,8,8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="48" />
+                <ColumnDefinition Width="8" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <!-- Rail (spec 03 §1): radius 14, rail fill, hairline border -->
+            <ui:Card CornerRadius="14" Background="{DynamicResource RailBrush}" Padding="0,10">
+                <DockPanel LastChildFill="False">
+                    <Button DockPanel.Dock="Top" Margin="0,0,0,14" HorizontalAlignment="Center" Command="{Binding OpenAyaCommand}"
+                            ToolTip="{Binding LogoTooltip}" AutomationProperties.Name="Aya">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource Aya.LinkButton}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding AyaUrl}" Value="{x:Null}">
+                                        <Setter Property="Cursor" Value="Arrow" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                        <ui:LogoTile Width="32" Height="32" />
+                    </Button>
+                    <Button DockPanel.Dock="Top" Margin="0,0,0,6" Style="{StaticResource Aya.IconButton.Borderless}"
+                            ui:Ui.Icon="{StaticResource Icon.Scribe}" ui:Ui.IsActive="{Binding IsScribe}" ui:Ui.ShowDot="{Binding ScribeDot}"
+                            Command="{Binding ShowScribeCommand}" AutomationProperties.Name="Scribe"
+                            ToolTip="Scribe: record and transcribe on this PC (Ctrl+1)" />
+                    <Button DockPanel.Dock="Top" Style="{StaticResource Aya.IconButton.Borderless}"
+                            ui:Ui.Icon="{StaticResource Icon.Assist}" ui:Ui.IsActive="{Binding IsAssist}" ui:Ui.ShowDot="{Binding AssistDot}"
+                            Command="{Binding ShowAssistCommand}" AutomationProperties.Name="Assist"
+                            ToolTip="Assist: live meeting assistant with Aya and Claude (Ctrl+2)" />
+
+                    <Border DockPanel.Dock="Bottom" Width="28" Height="28" CornerRadius="14" Margin="0,4,0,0"
+                            Background="{DynamicResource PrimaryTint12Brush}" ToolTip="{Binding MyName}">
+                        <TextBlock Text="{Binding Initials}" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryBrush}"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <Button DockPanel.Dock="Bottom" Margin="0,6,0,0" Style="{StaticResource Aya.IconButton.Borderless}"
+                            ui:Ui.Icon="{StaticResource Icon.Settings}" Command="{Binding OpenSettingsCommand}"
+                            AutomationProperties.Name="Settings" ToolTip="Settings (Ctrl+,)" />
+                    <Button DockPanel.Dock="Bottom" Style="{StaticResource Aya.IconButton.Borderless}"
+                            ui:Ui.Icon="{StaticResource Icon.Floating}" Command="{Binding ToggleFloatingCommand}"
+                            AutomationProperties.Name="Floating Live Transcript" ToolTip="Floating live transcript (Ctrl+Shift+L)" />
+                </DockPanel>
+            </ui:Card>
+
+            <ContentControl Grid.Column="2" Content="{Binding Current}" Focusable="False" />
+        </Grid>
+    </Grid>
+</Window>
