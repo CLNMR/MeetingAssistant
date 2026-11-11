@@ -151,11 +151,16 @@ public struct Transcript: Codable, Sendable {
 /// On-disk layout: ~/Library/Application Support/MeetingAssistant/
 /// (called MeetingScribe before the rename; the old folder is moved on first use).
 public enum AppPaths {
-    public static let root: URL = {
+    /// The override is read on every access, so a test that sets it is never beaten by another
+    /// test that read the root first (which would write test data into the real folder).
+    public static var root: URL {
         let env = ProcessInfo.processInfo.environment
         if let override = env["MEETINGASSISTANT_HOME"] ?? env["MEETINGSCRIBE_HOME"] {
             return URL(fileURLWithPath: override, isDirectory: true)
         }
+        return defaultRoot
+    }
+    private static let defaultRoot: URL = {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         return migratedRoot(base: base)
     }()
