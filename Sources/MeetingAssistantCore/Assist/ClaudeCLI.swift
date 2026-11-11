@@ -277,12 +277,18 @@ public final class ClaudeStream: @unchecked Sendable {
                 if !t.isEmpty { onEvent(.text(t)) }
             }
         case "result":
+            // Split into steps: as one expression it is too slow to type-check on CI.
             let u = v["usage"]
-            let ctx = Int((u?["input_tokens"]?.number ?? 0) + (u?["cache_read_input_tokens"]?.number ?? 0)
-                          + (u?["cache_creation_input_tokens"]?.number ?? 0))
-            onEvent(.turnDone(TurnResult(isError: v["is_error"]?.bool ?? false, text: v["result"]?.string ?? "",
-                                         totalCostUSD: v["total_cost_usd"]?.number ?? 0, contextTokens: ctx,
-                                         durationMs: Int(v["duration_ms"]?.number ?? 0))))
+            let input: Double = u?["input_tokens"]?.number ?? 0
+            let cacheRead: Double = u?["cache_read_input_tokens"]?.number ?? 0
+            let cacheCreation: Double = u?["cache_creation_input_tokens"]?.number ?? 0
+            let ctx = Int(input + cacheRead + cacheCreation)
+            let isError: Bool = v["is_error"]?.bool ?? false
+            let text: String = v["result"]?.string ?? ""
+            let cost: Double = v["total_cost_usd"]?.number ?? 0
+            let durationMs = Int(v["duration_ms"]?.number ?? 0)
+            onEvent(.turnDone(TurnResult(isError: isError, text: text, totalCostUSD: cost,
+                                         contextTokens: ctx, durationMs: durationMs)))
         default:
             break
         }

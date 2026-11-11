@@ -112,7 +112,8 @@ public static class ClaudeCli
     static string ExpandHome(string p, string home)
     {
         if (p == "~") return home;
-        if (p.StartsWith("~/") || p.StartsWith("~\\")) return Path.Combine(home, p[2..]);
+        // Keep the separator the user typed ("~/bin/claude" stays a "/" path on any host).
+        if (p.StartsWith("~/") || p.StartsWith("~\\")) return home.TrimEnd('/', '\\') + p[1..];
         return Environment.ExpandEnvironmentVariables(p);
     }
 
