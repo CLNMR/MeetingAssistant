@@ -32,6 +32,9 @@ struct GeneralSettings: View {
             }
             Toggle("Show live transcript while recording", isOn: $state.prefs.liveTranscription)
             Toggle("Create full transcript automatically after recording", isOn: $state.prefs.autoTranscribe)
+            Toggle("Hide the floating transcript and the dictation overlay from screen sharing", isOn: $state.prefs.hideFromScreenSharing)
+            Text("Others don’t see them when you share your screen. Some apps on recent macOS versions may still show them.")
+                .font(.caption).foregroundStyle(.secondary)
             LabeledContent("Transcription engine") {
                 AyaSelect(selection: $state.prefs.engine, options: ASREngineKind.allCases.map { ($0, $0.title) }).frame(maxWidth: 240)
             }

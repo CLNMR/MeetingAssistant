@@ -32,6 +32,7 @@ public sealed partial class FloatingTranscriptViewModel : ObservableObject
         _ui = ui;
         Shell = shell;
         _fontSize = Math.Clamp(ui.Get(UiKeys.FloatingFontSize, DefaultFont), MinFont, MaxFont);
+        _ghost = ui.Get(UiKeys.FloatingGhost, false);
     }
 
     /// Recording state, Assist banner, "Open MeetingAssistant".
@@ -42,6 +43,10 @@ public sealed partial class FloatingTranscriptViewModel : ObservableObject
 
     [ObservableProperty] double _fontSize;
     partial void OnFontSizeChanged(double value) => _ui.Set(UiKeys.FloatingFontSize, value);
+
+    /// Ghost mode: faded and click-through under the cursor; hold Ctrl to use the window.
+    [ObservableProperty] bool _ghost;
+    partial void OnGhostChanged(bool value) => _ui.Set(UiKeys.FloatingGhost, value);
 
     /// Listening paused by the user.
     [ObservableProperty]

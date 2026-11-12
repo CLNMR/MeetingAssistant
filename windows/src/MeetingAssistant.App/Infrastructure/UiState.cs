@@ -23,6 +23,8 @@ public static class UiKeys
     public const string FloatingOpen = "floatingPanel.open";
     /// Floating window text size, 9–28, default 13.
     public const string FloatingFontSize = "floatingPanel.fontSize";
+    /// Floating window ghost mode (see <see cref="MeetingAssistant.Core.Scribe.GhostMode"/>), default off.
+    public const string FloatingGhost = MeetingAssistant.Core.Scribe.GhostMode.Key;
     /// Windows only: floating window bounds "left,top,width,height" in DIPs (the Mac uses a frame autosave name).
     public const string FloatingFrame = "floatingPanel.frame";
     /// Windows only: main window bounds "left,top,width,height" and "max" when maximised.

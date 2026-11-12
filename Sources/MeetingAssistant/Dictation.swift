@@ -493,6 +493,7 @@ final class DictationHUD {
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         panel.contentView = NSHostingView(rootView: DictationHUDView().environmentObject(controller))
+        ScreenSharePrivacy.register(panel)
     }
 
     func show() {

@@ -34,6 +34,12 @@
                 <ToggleButton Style="{StaticResource Aya.Switch}" Margin="0,8" IsChecked="{Binding AutoTranscribe}">
                     <TextBlock Style="{StaticResource Aya.Text}" Text="Create full transcript automatically after recording" />
                 </ToggleButton>
+                <Border Height="1" Background="{DynamicResource BorderBrush}" />
+                <ToggleButton Style="{StaticResource Aya.Switch}" Margin="0,8,0,2" IsChecked="{Binding HideFromScreenSharing}">
+                    <TextBlock Style="{StaticResource Aya.Text}" Text="Hide the floating transcript and the dictation overlay from screen sharing" TextWrapping="Wrap" />
+                </ToggleButton>
+                <TextBlock Style="{StaticResource Aya.Text.CaptionMuted}" Margin="0,0,0,8" TextWrapping="Wrap"
+                           Text="Others don’t see them when you share your screen. Needs Windows 10 version 2004 or later." />
             </StackPanel>
         </ui:Card>
 

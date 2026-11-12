@@ -26,6 +26,8 @@ struct Preferences: Codable, Equatable {
     var fitToCursor = true
     /// Mute the sound output while dictating (not during a recording).
     var muteWhileDictating = true
+    /// Keep the floating live transcript and the dictation HUD out of screen sharing and screenshots.
+    var hideFromScreenSharing = true
 
     init() {}
 
@@ -33,6 +35,7 @@ struct Preferences: Codable, Equatable {
         case engine, language, myName, inputDeviceUID, liveTranscription, autoTranscribe, defaultMode
         case dictationEnabled, dictationHotKey
         case scribePlusHotKey, scribePlusContext, scribePlusWarm, scribePlusModel, fitToCursor, muteWhileDictating
+        case hideFromScreenSharing
     }
 
     // Missing keys fall back to defaults so new settings never reset the old ones.
@@ -54,6 +57,7 @@ struct Preferences: Codable, Equatable {
         scribePlusModel = (try? c.decodeIfPresent(String.self, forKey: .scribePlusModel)) ?? d.scribePlusModel
         fitToCursor = (try? c.decodeIfPresent(Bool.self, forKey: .fitToCursor)) ?? d.fitToCursor
         muteWhileDictating = (try? c.decodeIfPresent(Bool.self, forKey: .muteWhileDictating)) ?? d.muteWhileDictating
+        hideFromScreenSharing = (try? c.decodeIfPresent(Bool.self, forKey: .hideFromScreenSharing)) ?? d.hideFromScreenSharing
     }
 
     func encode(to encoder: Encoder) throws {
@@ -73,6 +77,7 @@ struct Preferences: Codable, Equatable {
         try c.encode(scribePlusModel, forKey: .scribePlusModel)
         try c.encode(fitToCursor, forKey: .fitToCursor)
         try c.encode(muteWhileDictating, forKey: .muteWhileDictating)
+        try c.encode(hideFromScreenSharing, forKey: .hideFromScreenSharing)
     }
 
     static let key = "preferences.v1"
@@ -112,6 +117,9 @@ final class AppState: ObservableObject {
                 || prefs.scribePlusHotKey != oldValue.scribePlusHotKey || prefs.scribePlusWarm != oldValue.scribePlusWarm
                 || prefs.scribePlusModel != oldValue.scribePlusModel {
                 applyDictationShortcut()
+            }
+            if prefs.hideFromScreenSharing != oldValue.hideFromScreenSharing {
+                ScreenSharePrivacy.apply(prefs.hideFromScreenSharing)
             }
         }
     }
@@ -193,6 +201,15 @@ final class AppState: ObservableObject {
                 await dictation.runTest(file: URL(fileURLWithPath: file), plus: plus, out: URL(fileURLWithPath: out), runs: runs)
                 exit(0)
             }
+        }
+        if let dir = UserDefaults.standard.string(forKey: "markdownSnapshot") {
+            // Debug: render the Markdown field to a PNG and quit.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                guard let self else { return }
+                AssistSnapshots.runMarkdown(app: self, dir: URL(fileURLWithPath: dir))
+                exit(0)
+            }
+            return
         }
         if let dir = UserDefaults.standard.string(forKey: "assistSnapshot") {
             // Debug: render the Assist screens with sample data to PNGs and quit (used for testing).
@@ -503,4 +520,24 @@ func quantizedLevel(_ v: Float) -> Float {
     guard v > 1e-6 else { return 0 }
     let db = (20 * log10(v) / 2).rounded() * 2
     return db < -60 ? 0 : pow(10, db / 20)
+}
+
+/// Keeps the app's overlay windows (floating live transcript, dictation HUD) out of screen sharing and
+/// screenshots. `sharingType = .none` is honoured by the older capture APIs; apps that capture with
+/// ScreenCaptureKit on macOS 15 and later may still show the windows.
+@MainActor
+enum ScreenSharePrivacy {
+    static let overlayID = NSUserInterfaceItemIdentifier("MeetingAssistant.overlay")
+
+    static func sharingType(_ hidden: Bool) -> NSWindow.SharingType { hidden ? .none : .readOnly }
+
+    /// Marks `window` as an overlay and applies the current preference.
+    static func register(_ window: NSWindow) {
+        window.identifier = overlayID
+        window.sharingType = sharingType(Preferences.load().hideFromScreenSharing)
+    }
+
+    static func apply(_ hidden: Bool) {
+        for w in NSApp.windows where w.identifier == overlayID { w.sharingType = sharingType(hidden) }
+    }
 }

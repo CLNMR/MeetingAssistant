@@ -5,6 +5,7 @@
             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
             xmlns:tb="clr-namespace:H.NotifyIcon;assembly=H.NotifyIcon.Wpf"
             xmlns:ui="clr-namespace:MeetingAssistant.App.Controls"
+            xmlns:app="clr-namespace:MeetingAssistant.App"
             xmlns:core="clr-namespace:MeetingAssistant.Core.Model;assembly=MeetingAssistant.Core"
             MenuActivation="RightClick" NoLeftClickDelay="True"
             DoubleClickCommand="{Binding ShowMainCommand}" LeftClickCommand="{Binding ShowMainCommand}">
@@ -56,6 +57,8 @@
             <Separator />
             <MenuItem Header="Floating Live Transcript" Command="{Binding ToggleFloatingCommand}" ui:Ui.Icon="{StaticResource Icon.Floating}"
                       InputGestureText="Ctrl+Shift+L" />
+            <MenuItem Header="Floating Transcript Ghost Mode" IsCheckable="True"
+                      IsChecked="{Binding Source={x:Static app:App.FloatingModel}, Path=Ghost, Mode=TwoWay}" />
             <MenuItem Header="Open MeetingAssistant" Command="{Binding ShowMainCommand}" />
             <MenuItem Header="Quit" Command="{Binding QuitCommand}" InputGestureText="Ctrl+Q" />
         </ContextMenu>

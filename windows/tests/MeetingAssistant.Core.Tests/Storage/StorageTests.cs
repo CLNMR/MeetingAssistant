@@ -549,7 +549,9 @@ public sealed class SessionFileTests : IDisposable
         var json = store.Get(SettingsStore.PreferencesKey)!.AsObject();
         Assert.True(json.ContainsKey("dictationHotKey"));              // written as null
         Assert.Null(json["dictationHotKey"]);
-        Assert.Equal(15, json.Count);
+        Assert.Equal(16, json.Count);
+        Assert.True(reread.HideFromScreenSharing);                     // on by default
+        Assert.False(Preferences.FromJson(JsonNode.Parse("""{"hideFromScreenSharing":false}""")).HideFromScreenSharing);
 
         store.DismissSplitHint("s1");
         store.DismissSplitHint("s2");

@@ -27,11 +27,14 @@ public partial class FloatingTranscriptWindow : Window
         InitializeComponent();
         PlaceInitially();
         SourceInitialized += (_, _) => Native.AddExStyle(this, Native.WS_EX_NOACTIVATE | Native.WS_EX_TOOLWINDOW);
+        ScreenSharePrivacy.Register(this);
+        var ghost = new GhostWindow(this, () => vm.Ghost);
         // The view model outlives the window (it is reopened often): unsubscribe when closed.
         NotifyCollectionChangedEventHandler paragraphs = (_, _) => OnParagraphsChanged();
         System.ComponentModel.PropertyChangedEventHandler following = (_, e) =>
         {
             if (e.PropertyName == nameof(vm.Following) && vm.Following) Scroller.ScrollToEnd();
+            if (e.PropertyName == nameof(vm.Ghost)) ghost.Update();
         };
         ((INotifyCollectionChanged)vm.Paragraphs).CollectionChanged += paragraphs;
         vm.PropertyChanged += following;

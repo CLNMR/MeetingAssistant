@@ -219,6 +219,8 @@ final class FloatingPanel: NSPanel {
 final class FloatingPanelController: NSObject, NSWindowDelegate {
     private var panel: FloatingPanel?
     private weak var state: AppState?
+    private var ghostTimer: Timer?
+    private var ghostLook = GhostMode.Look(opacity: 1, clickThrough: false)
     nonisolated static let openKey = "floatingPanel.open"
 
     init(state: AppState) { self.state = state }
@@ -244,6 +246,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
             p.minSize = NSSize(width: 260, height: 120)
             p.isReleasedWhenClosed = false
             p.delegate = self
+            ScreenSharePrivacy.register(p)
             p.contentView = NSHostingView(rootView: FloatingTranscriptView()
                 .environmentObject(state).environmentObject(state.listen))
             p.setFrameAutosaveName("FloatingTranscript")
@@ -254,10 +257,46 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         }
         panel?.orderFrontRegardless()
         UserDefaults.standard.set(true, forKey: Self.openKey)
+        startGhostTimer()
         Task { await state.listen.startListening() }
     }
 
     func close() { UserDefaults.standard.set(false, forKey: Self.openKey); panel?.close() }
+
+    // MARK: Ghost mode
+
+    /// Polls the cursor and ⌘ (a click-through window gets no mouse events of its own). Runs in the
+    /// common run-loop modes so it keeps going while a menu is open.
+    private func startGhostTimer() {
+        guard ghostTimer == nil else { return }
+        let t = Timer(timeInterval: GhostMode.pollInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.updateGhost() }
+        }
+        RunLoop.main.add(t, forMode: .common)
+        ghostTimer = t
+        updateGhost()
+    }
+
+    private func stopGhostTimer() {
+        ghostTimer?.invalidate(); ghostTimer = nil
+        ghostLook = GhostMode.Look(opacity: 1, clickThrough: false)
+        panel?.ignoresMouseEvents = false
+        panel?.alphaValue = 1
+    }
+
+    private func updateGhost() {
+        guard let panel, panel.isVisible else { return }
+        let look = GhostMode.look(enabled: UserDefaults.standard.bool(forKey: GhostMode.key),
+                                  cursorInside: panel.frame.contains(NSEvent.mouseLocation),
+                                  keyHeld: NSEvent.modifierFlags.contains(.command))
+        guard look != ghostLook else { return }
+        ghostLook = look
+        panel.ignoresMouseEvents = look.clickThrough
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = GhostMode.fadeSeconds
+            panel.animator().alphaValue = look.opacity
+        }
+    }
 
     /// Only called when the user closes the window, not when the app quits, so the
     /// window comes back at the next launch.
@@ -268,6 +307,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
 
     nonisolated func windowWillClose(_ notification: Notification) {
         Task { @MainActor in
+            self.stopGhostTimer()
             await self.state?.listen.stopListening()
             self.state?.objectWillChange.send()
         }
@@ -280,6 +320,7 @@ struct FloatingTranscriptView: View {
     @EnvironmentObject var state: AppState
     @EnvironmentObject var listen: ListenController
     @AppStorage("floatingPanel.fontSize") private var fontSize = 13.0
+    @AppStorage(GhostMode.key) private var ghost = false
     /// Follow new lines until the user scrolls away; scrolling back down resumes.
     /// Only the user's own scrolling changes this, not new content or resizing.
     @State private var atBottom = true
@@ -349,6 +390,8 @@ struct FloatingTranscriptView: View {
                 Divider()
                 Button("Larger Text") { fontSize = min(28, fontSize + 1) }
                 Button("Smaller Text") { fontSize = max(9, fontSize - 1) }
+                Divider()
+                Toggle("Ghost Mode (hold ⌘ to use the window)", isOn: $ghost)
                 Divider()
                 Button("Open MeetingAssistant") {
                     NSApp.activate(ignoringOtherApps: true)

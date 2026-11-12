@@ -61,6 +61,12 @@ public sealed partial class GeneralSettingsViewModel : ObservableObject
         set { if (value != P.AutoTranscribe) _services.UpdatePreferences(p => p.AutoTranscribe = value); }
     }
 
+    public bool HideFromScreenSharing
+    {
+        get => P.HideFromScreenSharing;
+        set { if (value != P.HideFromScreenSharing) _services.UpdatePreferences(p => p.HideFromScreenSharing = value); }
+    }
+
     /// Windows has Parakeet only (Qwen3-ASR has no word aligner in sherpa-onnx); a stored Qwen3
     /// preference is shown as Parakeet, which is what runs.
     public IReadOnlyList<Choice<string>> Engines { get; } =

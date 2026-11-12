@@ -26,6 +26,7 @@ public partial class DictationHudWindow : Window
         _bars = [B0, B1, B2, B3, B4];
         SourceInitialized += (_, _) => Native.AddExStyle(this,
             Native.WS_EX_NOACTIVATE | Native.WS_EX_TOOLWINDOW | Native.WS_EX_TRANSPARENT | Native.WS_EX_TOPMOST);
+        ScreenSharePrivacy.Register(this);
         vm.PropertyChanged += OnVmChanged;
     }
 

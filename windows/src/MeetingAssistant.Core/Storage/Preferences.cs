@@ -105,6 +105,8 @@ public sealed class Preferences
     public bool FitToCursor { get; set; } = true;
     /// Mute other sound while dictating (not during a recording).
     public bool MuteWhileDictating { get; set; } = true;
+    /// Keep the floating live transcript and the dictation HUD out of screen sharing and screenshots.
+    public bool HideFromScreenSharing { get; set; } = true;
 
     /// The user's name for labels: trimmed `MyName`, or "Me" when empty.
     public string EffectiveName => MyName.Trim().Length == 0 ? "Me" : MyName.Trim();
@@ -126,6 +128,7 @@ public sealed class Preferences
             ["scribePlusHotKey"] = ScribePlusHotKey?.ToJson(),
             ["scribePlusContext"] = ScribePlusContext, ["scribePlusWarm"] = ScribePlusWarm, ["scribePlusModel"] = ScribePlusModel,
             ["fitToCursor"] = FitToCursor, ["muteWhileDictating"] = MuteWhileDictating,
+            ["hideFromScreenSharing"] = HideFromScreenSharing,
         };
         if (InputDeviceUID is not null) o["inputDeviceUID"] = InputDeviceUID;
         return o;
@@ -158,6 +161,7 @@ public sealed class Preferences
         if (Str("scribePlusModel") is { } sm) p.ScribePlusModel = sm;
         if (Bool("fitToCursor") is { } fc) p.FitToCursor = fc;
         if (Bool("muteWhileDictating") is { } mu) p.MuteWhileDictating = mu;
+        if (Bool("hideFromScreenSharing") is { } hs) p.HideFromScreenSharing = hs;
         return p;
     }
 

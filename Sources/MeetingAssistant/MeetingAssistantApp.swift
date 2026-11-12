@@ -44,6 +44,7 @@ struct MeetingAssistantApp: App {
 
 struct MenuBarContent: View {
     @EnvironmentObject var state: AppState
+    @AppStorage(GhostMode.key) private var ghost = false
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -70,6 +71,7 @@ struct MenuBarContent: View {
         }
         Divider()
         Button("Floating Live Transcript") { state.floating.toggle() }
+        Toggle("Floating Transcript Ghost Mode", isOn: $ghost)
         Button("Open MeetingAssistant") {
             openWindow(id: "main")
             NSApp.activate(ignoringOtherApps: true)

@@ -1336,10 +1336,7 @@ private func editor(for value: Binding<ProposedValue>) -> some View {
         AyaSelect(selection: value.value, options: [("", "—")] + value.wrappedValue.options.map { ($0, $0) })
             .frame(maxWidth: 260)
     case .markdown:
-        TextEditor(text: value.value).font(.system(size: 13)).frame(minHeight: 90, maxHeight: 260)
-            .scrollContentBackground(.hidden).padding(6)
-            .background(Aya.card, in: RoundedRectangle(cornerRadius: Aya.radiusControl, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: Aya.radiusControl, style: .continuous).strokeBorder(Aya.input, lineWidth: 1))
+        MarkdownField(text: value.value)
     default:
         TextField("", text: value.value, axis: .vertical).lineLimit(1...6).textFieldStyle(AyaFieldStyle())
     }
@@ -1470,6 +1467,37 @@ enum AssistSnapshots {
         }
         app.appMode = mode
         render(AssistSettingsView(assist: a), app: app, size: CGSize(width: 620, height: 900), to: dir.appendingPathComponent("5-settings.png"), wait: 1.5)
+    }
+
+    /// The Markdown field of the recap, as preview and as editor (`-markdownSnapshot <dir>`).
+    static func runMarkdown(app: AppState, dir: URL) {
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let sample = """
+        ## Ausgangslage
+        Festival mit **über 2.000** Crew-Mitgliedern, Planung bisher in *Excel* und ~~WhatsApp~~ E-Mail.
+        - Schichtplanung
+          - Check-in am `Gate 3`
+        - Akkreditierung, siehe [Doku](https://example.com)
+
+        ### Nächste Schritte
+        1. Angebot bis Freitag
+        2. Demo mit Erika Musterfrau
+        - [x] Zugang angelegt
+        - [ ] Daten importieren
+
+        > Wir brauchen das vor der Saison.
+
+        | Frage | Antwort |
+        |---|---|
+        | Budget | 10.000 € |
+        | Start | März |
+        """
+        let view = VStack(alignment: .leading, spacing: 16) {
+            MarkdownField(text: .constant(sample), editing: false)
+            MarkdownField(text: .constant(sample), editing: true)
+            MarkdownField(text: .constant(""))
+        }.padding(20)
+        render(view, app: app, size: CGSize(width: 640, height: 1080), to: dir.appendingPathComponent("markdown.png"), wait: 1)
     }
 
     static func render<V: View>(_ view: V, app: AppState, size: CGSize, to url: URL, wait: TimeInterval) {

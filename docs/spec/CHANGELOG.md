@@ -10,6 +10,18 @@ What changed for the user, in one to three sentences.
 Sections: 01-recording (Live transcription), 03-assist-ui (Review)
 ```
 
+## 2026-11-11: Markdown editor for the recap fields
+Markdown fields of the recap (and Markdown CRM changes) now show the formatted text: headings, lists, checklists, quotes, code, tables and inline styles. Clicking switches to an editor with a formatting bar (heading, bold, italic, strikethrough, code, lists, checklist, quote), shortcuts, list continuation on Return, Tab/Shift-Tab nesting and live highlighting; Done or Esc returns to the formatted view. The editor grows to 420 px.
+Sections: 03-assist-ui (8.2 Meeting recap: Markdown field, Mac implementation; 13 snapshot renderer; Windows implementation)
+
+## 2026-11-11: Ghost mode for the floating live transcript
+A new Ghost Mode (in the floating window's "⋯" menu and the menu-bar menu, off by default) makes the floating window fade to 25 % and let clicks through while the cursor is over it. Holding ⌘ (Windows: Ctrl) makes it usable again while held.
+Sections: 01-recording (Floating live transcript window, Menu-bar (tray) menu, Windows implementation)
+
+## 2026-11-11: Hide the overlays from screen sharing
+The floating live transcript and the dictation overlay are left out of screen sharing, recordings and screenshots, so others in a call don't see them. A new General setting turns this off; it is on by default.
+Sections: 01-recording (Floating live transcript window, Windows implementation), 04-dictation-settings (1.7 HUD, 6.1 General, Windows implementation)
+
 ## 2026-11-11: Windows app, and spec corrections found while building it
 The Windows app (`windows/`) was built from the whole spec. No behaviour of the Mac app changed; the spec now states details the port needed.
 - JSON rules: string escaping (`/` as `\/` in files), number and empty-array format.

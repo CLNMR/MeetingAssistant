@@ -18,8 +18,7 @@
                              SelectedValue="{Binding BoolValue}" Width="160" HorizontalAlignment="Left" Visibility="Collapsed" />
                     <v:AyaSelect x:Name="Sel" ItemsSource="{Binding Options}" SelectedValue="{Binding SelectValue}" MaxWidth="260" HorizontalAlignment="Left"
                                  MinWidth="160" Visibility="Collapsed" />
-                    <TextBox x:Name="Md" Text="{Binding Value, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="90"
-                             MaxHeight="260" VerticalScrollBarVisibility="Auto" VerticalContentAlignment="Top" Visibility="Collapsed" />
+                    <ui:MarkdownField x:Name="Md" Text="{Binding Value}" Visibility="Collapsed" />
                     <TextBox x:Name="Tx" Text="{Binding Value, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" MaxHeight="120"
                              VerticalScrollBarVisibility="Auto" Visibility="Collapsed" />
                 </Grid>

@@ -30,6 +30,8 @@ public partial class App : Application, IWindowService
 
     public ShellViewModel Shell { get; private set; } = null!;
     public FloatingTranscriptViewModel Floating { get; private set; } = null!;
+    /// The floating window's view model for XAML outside its window (tray menu: ghost mode).
+    public static FloatingTranscriptViewModel FloatingModel => Current.Floating;
     public HudViewModel Hud { get; private set; } = null!;
 
     protected override void OnStartup(StartupEventArgs e)

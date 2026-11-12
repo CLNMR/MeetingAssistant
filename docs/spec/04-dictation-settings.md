@@ -102,6 +102,7 @@ On release (only if phase is `listening`):
 
 - A borderless capsule (corner radius 18, translucent material background, thin 15 % white border), max text width 520 pt, panel 620×200 pt, positioned horizontally centred **70 pt above the bottom of the visible area of the screen that contains the mouse pointer**.
 - Never takes focus, ignores mouse clicks, floats above normal windows (status-bar level), visible on all Spaces and over full-screen apps.
+- Left out of screen sharing, recordings and screenshots while *Hide the floating transcript and the dictation overlay from screen sharing* is on (§6.1), like the floating live transcript.
 - Content by phase:
   - listening, plain: red mic icon + `Listening…` + 5 level bars.
   - listening, plus: purple "sparkles" icon + `Scribe+ listening…` + level bars.
@@ -451,6 +452,7 @@ Storage: app preferences as one JSON blob under key `preferences.v1` in the app'
 | *Default meeting type* | `defaultMode` | `call` | `call` (Call), `inPerson` (In person), `hybrid` (Hybrid) |
 | *Show live transcript while recording* | `liveTranscription` | on | |
 | *Create full transcript automatically after recording* | `autoTranscribe` | on | |
+| *Hide the floating transcript and the dictation overlay from screen sharing* | `hideFromScreenSharing` | on | Caption `Others don’t see them when you share your screen. Some apps on recent macOS versions may still show them.` (Windows: `… Needs Windows 10 version 2004 or later.`). The two windows stay visible to the user; screen sharing, recordings and screenshots show what is behind them. Applies at once. |
 | *Transcription engine* | `engine` | `parakeet-ultra` | `Parakeet Ultra — fast, 25 European languages (recommended)` / `qwen3-1.7b` `Qwen3-ASR 1.7B — slower, 30 languages incl. Asian`. Not used by dictation. |
 | *Language* | `language` | `auto` | Automatic / German / English; caption `“Automatic” handles meetings that switch between German and English.` |
 | *Recordings folder* → `Show in Finder` | – | – | Opens `<AppData>/Sessions` |
@@ -637,6 +639,7 @@ On push to `main` and on pull requests; `macos-15` runner, 45-minute timeout: se
 - **Dictation recovery files** keep the Mac format (Float32 CAF, audio at byte 4096).
 - **Scribe+ timeout** shows "Claude failed: Claude took too long".
 - **Preferences:** one file, `<root>/preferences.json`, holding all Mac user-defaults keys.
+- **Hide from screen sharing:** `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` on the HUD and the floating window; the setting's caption names the Windows version needed.
 - **Microphone access:** Windows has no "not determined" state; blocked access gives `No microphone access (Settings › Privacy)`. Settings › Dictation shows a Microphone row (Allowed / `Allow…`) instead of the Mac's permission section.
 - **Clipboard failure:** the recovery file is kept and `Could not use the clipboard – try again` is shown (the Mac always deletes the file after the hand-off).
 - **Log:** `<root>\Logs\dictation.log`, rotated at 1 MB. Taps and accidental presses write no log line (as on the Mac); extra lines for `microphone failed`, `paste failed`, `retry failed`.

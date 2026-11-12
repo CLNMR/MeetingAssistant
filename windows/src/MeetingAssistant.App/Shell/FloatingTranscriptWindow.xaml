@@ -99,6 +99,8 @@
                         <MenuItem Header="Larger Text" Command="{Binding LargerCommand}" InputGestureText="Ctrl++" />
                         <MenuItem Header="Smaller Text" Command="{Binding SmallerCommand}" InputGestureText="Ctrl+-" />
                         <Separator />
+                        <MenuItem Header="Ghost Mode (hold Ctrl to use the window)" IsCheckable="True" IsChecked="{Binding Ghost}" />
+                        <Separator />
                         <MenuItem Header="Open MeetingAssistant" Command="{Binding Shell.ShowMainCommand}" />
                     </ContextMenu>
                 </Button.ContextMenu>

@@ -356,9 +356,29 @@ When the target is an existing meeting, a hint reads "Fields that already have c
 - When ticked, an editor (indented 20 px) chosen by field kind:
   - boolean: a Yes/No segmented control (160 px; the value is normalised so "true", "yes", "ja" or "1" become true);
   - select: an Aya select with "—" plus the known options (max 260 px);
-  - markdown: a multi-line text editor (90–260 px tall, 13 pt, `card` fill, `input` border, radius 8);
+  - markdown: a **Markdown field** (below);
   - anything else: a text field that grows to 6 lines.
 - If the field has a note (e.g. "Removed deadlines not said in the meeting: “…”"), it shows in warning colour with a calendar-exclamation icon.
+
+**Markdown field** (recap fields and CRM changes of kind markdown). One box (`card` fill, radius 8, `input` border; `primary` at 60 % while editing) with two modes:
+- **Preview** (when the field has text): the formatted text, 12 × 10 px padding, selectable. Clicking it, or the **Edit** button (secondary, small, pencil icon, tooltip "Edit the Markdown text") that shows top right on hover, switches to the editor. An empty field reads "Empty. Click to write." (subtle).
+- **Editor** (when the field is empty, or after a click): a formatting bar on a `field` background, then the text. The bar has: Heading (menu: Heading 1, 2, 3), Bold (⌘B), Italic (⌘I), Strikethrough (⇧⌘X), Code (⌘E), a separator, Bulleted list, Numbered list, Checklist, Quote, and on the right **Done** (secondary, small; also Esc), which returns to the preview. Tooltips name the shortcut. The editor grows with the text from **90 to 420 px** and scrolls beyond. A field stays in the mode it is in until Done (losing focus does not switch). Spell checking is on; smart quotes, smart dashes and text replacement are off, so the Markdown stays intact. Pasting inserts plain text.
+
+Rendering, the same in the preview and in the editor's highlighting (13 pt base):
+- Headings `#`…`######` (a closing `#` run is dropped): level 1 at 18 pt, 2 at 16 pt, 3 at 14.5 pt, 4–6 at 13 pt, all semibold.
+- Paragraphs: consecutive lines are one paragraph and keep their line breaks; a blank line separates paragraphs.
+- Lists: `-`, `*`, `+` bullets (`•`, `◦`, `▪` by depth, `primary`), `1.` / `1)` numbers (muted, as written), tasks `- [ ]` / `- [x]` (an empty box, or a filled `primary` check with the text muted). Nesting follows the indentation (any width; a deeper indent opens a level, a shallower one closes levels back to the matching one), 18 px per level. An indented line right after an item continues it.
+- Quotes `> ` (consecutive lines join): a 3 px `border` bar, muted text. Code fences ```` ``` ```` or `~~~` (unclosed: to the end): monospaced 12 pt on `field`, radius 6, no inline formatting inside. Rules `---`, `***`, `___`: a divider.
+- Tables: a row with `|` followed by a delimiter row (`---`, `:--`, `:-:`, with or without outer pipes). Rows run until a blank line or a line without `|`; short rows are padded, long ones cut to the header. `\|` is a literal pipe. Header row semibold on `muted`; cells 12 pt, 8 × 5 px padding, `border` grid, radius 6.
+- Inline: `**bold**` / `__bold__`, `*italic*` / `_italic_`, `***both***`, `~~strikethrough~~`, `` `code` `` (monospaced on `muted`, no formatting inside), `[text](url)` (`primary`, underlined, opens the URL). Nesting works (`**a *b* c**`). A delimiter only opens before a non-space and closes after one, with the exact same run length; `_` must not touch a letter or digit on the outside (so `snake_case` stays text). Unclosed delimiters stay as text. `\` before punctuation makes it literal.
+- Editor highlighting: the text keeps its Markdown. Markup characters (`#`, `**`, `` ` ``, `>`, `|`, `](url)`, fences, rules, delimiter rows) are `textSubtle`; list markers are `primary` semibold; headings, bold, italic, strikethrough, code and links look as in the preview; code blocks and table rows are monospaced (12 pt), so columns line up.
+
+Editing commands of the editor (positions in UTF-16 units):
+- **Bold, italic, strikethrough, code** wrap the selection in `**`, `*`, `~~`, `` ` ``. Whitespace at the ends of the selection stays outside. If the selection already has the marker (inside its ends, or right around it), it is removed instead; a run of 3 counts as having both `*` and `**`. With nothing selected, the pair is inserted with the cursor between; doing it again right there removes the empty pair.
+- **Heading, lists, checklist, quote** apply to every line the selection touches (a selection ending at the start of a line leaves that line out; blank lines are skipped when several lines are selected). If all those lines already have that style (the same heading level), it is removed (headings also drop the indent); otherwise it replaces their current marker. Numbers count 1, 2, 3… over the lines. The cursor keeps its place in the text; with a selection, the changed lines end up selected.
+- **Return** in a list item continues the list: the same bullet, the next number with the same delimiter, or a new open task `- [ ]`, at the same indent; in a quote it adds `> `. Text after the cursor moves to the new item. Return in an item with no text removes its marker (ends the list). Elsewhere, in the marker, or with a selection: an ordinary line break.
+- **Tab / Shift-Tab** on list items: Tab indents the selected items by the marker width of the item above at the same level (else their own: 2 for `- `, 3 for `1. `). Shift-Tab moves them back to the indent of the nearest shallower item above (or 0). If a selected line is not a list item, Tab behaves normally.
+- Every command is one undo step.
 
 **Autosave of the draft:** every change to the recap fields (edits, ticks, target changes, speaker renames) schedules a save **600 ms** after the last change into the session's Assist record (`recapDraft`; empty saves as none). Opening another review, finishing the review, re-opening or quitting the app flushes the pending save immediately. Draft writes only apply to the review they were scheduled for.
 
@@ -396,7 +416,7 @@ context, final live state, live lines, recap draft, completed tables, uploaded m
 #### 8.7 Delete meeting (Review header or Meetings context menu)
 A confirmation dialog titled "Delete “<title>”?" with the message "The recording, the transcript and the notes on this Mac are deleted. What was saved in Aya stays there." and a destructive **Delete** button (plus the system Cancel). Deleting the meeting under review first finishes the review, then deletes the session folder.
 
-*Mac implementation:* `AssistReviewView`, `FieldEditor`, `ChangeRow`, `editor(for:)` in `AssistView.swift`; `ReviewSpeakersSection`, `deleteMeetingDialog` in `AssistPeopleViews.swift`; `ReviewTablesSection` in `AssistTablesView.swift`. Controller: `openReview`, `loadTargets`, `setTarget`, `targetChoices`, `waitForTranscriptThenDraft`, `draftRecap`, `completeTables`, `setReviewCell`, `tablesFieldLabel`, `uploadRecap`, `proposeCRM`, `applyCRM`, `finishReview` (`AssistController.swift`); `saveDraftSoon`, `flushDraft`, `carrySpeakerNames`, `renameFinalSpeaker`, `deleteMeeting` (`AssistMeetings.swift`).
+*Mac implementation:* `AssistReviewView`, `FieldEditor`, `ChangeRow`, `editor(for:)` in `AssistView.swift`; the Markdown field is `MarkdownField`, `MarkdownPreview` and `MarkdownTextView` (an `NSTextView` that re-styles its text storage on every change) in `MarkdownEditor.swift`, with parsing, highlighting and the editing commands in Core `Markdown` (`blocks`, `inline`, `highlight`, `wrap`, `toggleLines`, `newline`, `indent`; `Util/Markdown.swift`); `ReviewSpeakersSection`, `deleteMeetingDialog` in `AssistPeopleViews.swift`; `ReviewTablesSection` in `AssistTablesView.swift`. Controller: `openReview`, `loadTargets`, `setTarget`, `targetChoices`, `waitForTranscriptThenDraft`, `draftRecap`, `completeTables`, `setReviewCell`, `tablesFieldLabel`, `uploadRecap`, `proposeCRM`, `applyCRM`, `finishReview` (`AssistController.swift`); `saveDraftSoon`, `flushDraft`, `carrySpeakerNames`, `renameFinalSpeaker`, `deleteMeeting` (`AssistMeetings.swift`).
 
 *Windows notes:* Use a `ContentDialog` for delete (PrimaryButton "Delete", styled as danger). Debounce the autosave with a timer reset on every `PropertyChanged`. Flush on navigation and on window close (the Mac does not flush explicitly on quit; Windows should).
 
@@ -600,6 +620,8 @@ Launching with `-assistSnapshot <dir> [-assistSnapshotRecord <assist.json>]` (op
 - the review tables;
 - Settings.
 
+`-markdownSnapshot <dir>` renders only the Markdown field (preview, editor with text, empty editor) to `markdown.png` and quits.
+
 It is used for layout checks without a display. The Windows port only needs it as an optional test aid. *Mac:* `AssistSnapshots` at the end of `AssistView.swift`, triggered from `AppState`.
 
 ---
@@ -620,3 +642,4 @@ It is used for layout checks without a display. The Windows port only needs it a
 - "Aya lists updated" uses "just now", "N min ago", "N hr ago", "yesterday", "N days ago" (the Mac uses the system's relative-date wording).
 - Import: the date is a date picker plus an HH:mm field. The Aya select list is a popup that closes on an outside click.
 - Wording: "stored securely" instead of "stored in the Keychain", "Show in Explorer", Ctrl+Shift+Space for Suggest now.
+- Markdown field: `Controls/MarkdownField.cs`. The editor is AvalonEdit (`TextEditor`) with a `DocumentColorizingTransformer` fed by Core `Markdown.Highlight`; the preview is built from WPF elements (`TextBlock` inlines, `Hyperlink`, `Grid` tables). Shortcuts use Ctrl (Ctrl+B, Ctrl+I, Ctrl+E, Ctrl+Shift+X). Differences: the editor has no spell checking, and the preview text is not selectable (a click opens the editor). Toolbar labels are text ("H", "B", "I", "S", "</>", "1.") or Segoe Fluent glyphs (bulleted list, checklist, quote); task boxes use the Checkbox / CheckboxComposite glyphs.
