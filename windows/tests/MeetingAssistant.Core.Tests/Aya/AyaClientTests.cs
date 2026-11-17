@@ -229,8 +229,18 @@ public class AyaModelTests
         Assert.Equal("https://app.hey-aya.ai/org/o%20g", c.OrgUrl);
         Assert.Equal(c.OrgUrl, c.LogoUrl);
         c.SetList(AyaSlot.Meetings, new AyaListRef("W", "PM", "pmMeetings", "Meetings"));
-        Assert.Equal("https://app.hey-aya.ai/workspace/W/recordlist/pmMeetings/record/R", c.WebUrl(AyaSlot.Meetings, "R"));
-        Assert.Equal("https://app.hey-aya.ai/workspace/W/recordlist/pmMeetings", c.LogoUrl);
+        Assert.Equal("https://app.hey-aya.ai/workspace/W/record/pmMeetings/R", c.WebUrl(AyaSlot.Meetings, "R"));
+        Assert.Equal("https://app.hey-aya.ai/workspace/W/list/pmMeetings/", c.LogoUrl);
+    }
+
+    [Fact]
+    public void WebLinksUseTheRecordType()
+    {
+        Assert.Equal("https://app.hey-aya.ai/workspace/WS1/record/pmMeetings/R1", AyaWebLink.Url("WS1", "pmMeetings", "R1"));
+        Assert.Equal("https://app.hey-aya.ai/workspace/WS1/list/pmMeetings/", AyaWebLink.Url("WS1", "pmMeetings"));
+        Assert.EndsWith("/list/pmMeetings/", AyaWebLink.Url("WS1", "pmMeetings", ""));
+        Assert.Null(AyaWebLink.Url("", "x"));
+        Assert.Equal("https://app.hey-aya.ai/workspace/W%20S/record/a%2Fb/R", AyaWebLink.Url(" W S ", "a/b", "R"));
     }
 
     [Fact]

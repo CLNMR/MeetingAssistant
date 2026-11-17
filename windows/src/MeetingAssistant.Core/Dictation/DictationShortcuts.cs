@@ -33,6 +33,9 @@ public static class DictationShortcuts
     /// The Scribe+ shortcut of these preferences (null when not set or dictation is off).
     public static HotKey? Plus(Preferences p) => p.DictationEnabled ? ToHotKey(p.ScribePlusHotKey, HotKey.DefaultPlus) : null;
 
+    /// The meeting shortcut (spec 04 §3.4), independent of dictation; null when not set.
+    public static HotKey? Meeting(Preferences p) => ToHotKey(p.MeetingHotKey, HotKey.DefaultMeeting);
+
     /// Text of a shortcut button: its display name, or `Not set`.
     public static string Display(HotKey? k, Func<int, string?>? keyChar = null) => k?.Display(keyChar) ?? "Not set";
 

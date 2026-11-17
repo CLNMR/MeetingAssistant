@@ -28,6 +28,15 @@ sealed class FakeHost : IAssistHost
     public Task<SessionInfo> ImportFilesAsync(string mic, string? system, MeetingMode mode, string title, DateTime startedAt) => throw new NotSupportedException();
     public void LearnSpeaker(string name, float[] embedding) => Learned.Add((name, embedding));
     public void ShowAssist() => ShowAssistCalls++;
+    public List<(string Id, string Title)> Renamed { get; } = new();
+    public HashSet<string> Saved { get; } = new();
+    public void RenameSession(string id, string title)
+    {
+        Renamed.Add((id, title));
+        if (Infos.TryGetValue(id, out var s)) s.Title = title;
+    }
+    public bool IsSavedToAya(string id) => Saved.Contains(id);
+    public void MarkSavedToAya(string id) => Saved.Add(id);
 }
 
 sealed class FakeRecapClaude : IRecapClaude
@@ -128,6 +137,46 @@ public class AssistReviewControllerTests
         Assert.Equal("Sofort", AssistRecord.Load("S1")!.RecapDraft![0].Value);
         Assert.Null(review.SessionId);
         Assert.False(review.Open("missing"));
+    }
+
+    [Fact]
+    public void SessionsAreNamedAfterTheirAyaTitle()
+    {
+        using var home = new TempHome();
+        var (review, host, _, _) = Make();
+        // An automatic name ("Meeting" or the context title) is replaced, a typed one only when forced.
+        Session(host, "S1", SessionStatus.Done);
+        host.Infos["S1"].Title = "Meeting";
+        review.NameSession("S1", "## Kickoff MUSTER SOLAR\nmehr", "Kickoff", force: false);
+        Assert.Equal("Kickoff MUSTER SOLAR", host.Infos["S1"].Title);
+        Session(host, "S2", SessionStatus.Done);
+        review.NameSession("S2", "Workshop", "Kickoff", force: false);          // "Kickoff" is the automatic name
+        Assert.Equal("Workshop", host.Infos["S2"].Title);
+        review.NameSession("S2", "Anders", "Kickoff", force: false);            // now a name of its own
+        Assert.Equal("Workshop", host.Infos["S2"].Title);
+        review.NameSession("S2", "Anders", "Kickoff", force: true);
+        Assert.Equal("Anders", host.Infos["S2"].Title);
+        review.NameSession("S2", "  ", "Kickoff", force: true);
+        Assert.Equal("Anders", host.Infos["S2"].Title);
+        var renames = host.Renamed.Count;
+        review.NameSession("S2", "Anders", "Kickoff", force: true);             // same name: nothing to do
+        Assert.Equal(renames, host.Renamed.Count);
+
+        // At start: meetings saved to Aya with an automatic name take the draft's title.
+        Session(host, "S3", SessionStatus.Done);
+        host.Infos["S3"].Title = "Meeting";
+        var rec = Record();
+        rec.RecapDraft = Fields();
+        rec.RecapRecordID = "R3";
+        rec.Save("S3");
+        host.Saved.Add("S3");
+        Session(host, "S4", SessionStatus.Done);
+        host.Infos["S4"].Title = "Meeting";
+        rec.RecapRecordID = null;
+        rec.Save("S4");                                                         // not saved to Aya
+        review.NameSavedMeetings();
+        Assert.Equal("Kickoff MUSTER SOLAR", host.Infos["S3"].Title);
+        Assert.Equal("Meeting", host.Infos["S4"].Title);
     }
 
     [Fact]

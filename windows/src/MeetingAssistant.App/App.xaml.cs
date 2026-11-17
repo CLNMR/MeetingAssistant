@@ -100,6 +100,7 @@ public partial class App : Application, IWindowService
         StartArea("Assist", StartAssist);         // App.Assist.cs: Assist controller and views
         StartArea("dictation", StartDictation);   // App.Dictation.cs: hotkeys, HUD, Scribe+
         _single.Listen(() => Dispatcher.BeginInvoke(ShowMain));
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ApplicationIdle, () => AskLaunchAtLogin(e.Args));
     }
 
     void StartArea(string name, Action start)

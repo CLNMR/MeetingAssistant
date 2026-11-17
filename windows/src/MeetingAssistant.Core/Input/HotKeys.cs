@@ -68,6 +68,9 @@ public sealed record HotKey
         return new HotKey { KeyCode = ordered[0], Modifiers = 0, ModifierOnly = true, ModifierKeys = ordered.Count > 1 ? ordered : null };
     }
 
+    /// Windows default of the meeting shortcut: Ctrl+Alt+Win+R (spec 04 §3.4, §6.1).
+    public static HotKey DefaultMeeting => Combo(0x52, ModControl | ModAlt | ModWin);
+
     /// A key combination.
     public static HotKey Combo(int keyCode, int modifiers) => new() { KeyCode = keyCode, Modifiers = modifiers, ModifierOnly = false };
 

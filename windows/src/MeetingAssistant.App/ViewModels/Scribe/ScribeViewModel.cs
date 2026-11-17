@@ -35,6 +35,9 @@ public sealed partial class SessionRowViewModel : ObservableObject
     double? _progress;
     public bool HasProgress => Progress is not null;
     public double ProgressValue => Progress ?? 0;
+
+    /// Transcribed and saved to Aya: the badge is the cloud icon instead of the green check.
+    [ObservableProperty] bool _savedToAya;
 }
 
 /// Scribe mode: the recordings panel (290 px) and the main area, which shows the recorder or the
@@ -148,6 +151,7 @@ public sealed partial class ScribeViewModel : ObservableObject
             if (_rows.TryGetValue(s.Id, out var row)) row.Info = s;
             else _rows[s.Id] = row = new SessionRowViewModel(s);
             row.Progress = _scribe.ProgressOf(s.Id)?.Fraction;
+            row.SavedToAya = _scribe.IsSavedToAya(s.Id);
             Sessions.Add(row);
         }
         Refilter();

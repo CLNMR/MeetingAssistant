@@ -271,6 +271,7 @@ public sealed class AssistReviewController : ObservableObject
         {
             if (TargetMeetingID is not null && TargetRecord is null) await LoadTargetRecordAsync();
             RecapFields = await _claude.DraftRecapAsync(b, _aya.Settings.Model, rec, id, schema, _aya.Config, TargetRecord);
+            NameSession(id, RecapBuilder.Title(RecapFields, _aya.Config), rec.Context.Title, force: false);
             RecapState = StepState.IdleState;
         }
         catch (Exception e) when (e is ClaudeException or AyaException or IOException) { RecapState = new StepState.Failed(e.Message); }
@@ -327,18 +328,21 @@ public sealed class AssistReviewController : ObservableObject
         var people = new[] { rec.Context.MyName }.Concat(rec.State.Attendees.Where(a => a.Present != false).Select(a => a.Name));
         var memberIDs = RecapBuilder.MemberIDs(people, _aya.Members);
         RecapState = new StepState.Working("Saving in Aya…");
+        string? written = null;
         try
         {
             if (TargetMeetingID is { } target)
             {
                 var current = await svc.RecordAsync(AyaSlot.Meetings, target);
                 var values = RecapBuilder.RecapValues(_recapFields, rec, id, started, schema, _aya.Config, current, memberIDs, Tables);
+                written = Written(values);
                 TargetRecord = await svc.Client.UpdateAsync(r.WorkspaceId, r.TechName, target, values);
                 rec.RecapRecordID = target;
             }
             else
             {
                 var values = RecapBuilder.RecapValues(_recapFields, rec, id, started, schema, _aya.Config, null, memberIDs, Tables);
+                written = Written(values);
                 var created = await svc.Client.CreateAsync(r.WorkspaceId, r.TechName, values);
                 rec.RecapRecordID = created.Id;
                 TargetMeetingID = created.Id;
@@ -346,9 +350,40 @@ public sealed class AssistReviewController : ObservableObject
             }
             rec.RecapUploadedAt = DateTime.UtcNow;
             Save(rec);
+            _host.MarkSavedToAya(id);
+            // The sidebar shows the title the meeting has in Aya.
+            NameSession(id, written ?? TargetRecord?.Title, rec.Context.Title, force: true);
             RecapState = new StepState.Done($"Saved in Aya: “{TargetRecord?.Title ?? "meeting"}” ({r.Label}).");
         }
         catch (Exception e) when (e is AyaException or IOException) { RecapState = new StepState.Failed(e.Message); }
+    }
+
+    /// The title value being written, when the configured title field is a string.
+    string? Written(IReadOnlyDictionary<string, JsonNode?> values) =>
+        values.TryGetValue(_aya.Config.MeetingTitleField, out var v) && v is JsonValue jv && jv.TryGetValue<string>(out var s) ? s : null;
+
+    /// <summary>
+    /// Names a session after its meeting's title (spec 03 §8.2, Session name = Aya title). Without
+    /// <paramref name="force"/> only a session that still has its automatic name ("Meeting" or the name it
+    /// got at the start) is renamed, so a name the user typed stays.
+    /// </summary>
+    public void NameSession(string id, string? title, string automatic, bool force)
+    {
+        if (title is null) return;
+        var t = RecapBuilder.SessionTitle(title);
+        if (t.Length == 0 || _host.Session(id) is not { } s || s.Title == t) return;
+        if (!force && s.Title != "Meeting" && s.Title != automatic) return;
+        _host.RenameSession(id, t);
+    }
+
+    /// Meetings saved to Aya before sessions were named after their title get that name once (at app start).
+    public void NameSavedMeetings()
+    {
+        foreach (var s in _host.Sessions.ToList())
+        {
+            if (!_host.IsSavedToAya(s.Id) || AssistRecord.Load(s.Id) is not { RecapRecordID: not null, RecapDraft: { } draft } rec) continue;
+            NameSession(s.Id, RecapBuilder.Title(draft, _aya.Config), rec.Context.Title, force: false);
+        }
     }
 
     /// The Aya web link of the uploaded meeting.

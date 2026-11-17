@@ -61,6 +61,25 @@ public partial class App
         });
         Scribe.ProgressChanged += _ => AppServices.Ui(meetings.Refresh);
 
+        // Names given during the meeting also label the recording in the floating window.
+        AssistLiveSession? observed = null;
+        void SyncNames()
+        {
+            if (assist.Live is { } live && Scribe.IsRecording)
+                Scribe.Listen.SetRecordingNames(SpeakerNames.ForFloatingWindow(live.State));
+        }
+        void OnLiveChanged(object? _, PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == nameof(AssistLiveSession.State)) AppServices.Ui(SyncNames);
+        }
+        AssistUiHelpers.Observe(assist, p =>
+        {
+            if (p != nameof(AssistController.Live) || ReferenceEquals(observed, assist.Live)) return;
+            if (observed is not null) observed.PropertyChanged -= OnLiveChanged;
+            observed = assist.Live;
+            if (observed is not null) observed.PropertyChanged += OnLiveChanged;
+        });
+
         // Ctrl+Shift+Space in the live view; "Assist Recap" in Scribe's session detail.
         shell.SuggestNowRequested += () => _ = assist.Live?.SuggestNowAsync();
         ScribeController.AssistReviewRequested += id => AppServices.Ui(() => assist.OpenReview(id));
@@ -122,4 +141,7 @@ sealed class AppAssistHost(App app) : IAssistHost
     public void LearnSpeaker(string name, float[] embedding) => Scribe.LearnSpeaker(name, embedding);
 
     public void ShowAssist() => app.Shell.Mode = AppMode.Assist;
+    public void RenameSession(string id, string title) => Scribe.Rename(id, title);
+    public bool IsSavedToAya(string id) => Scribe.IsSavedToAya(id);
+    public void MarkSavedToAya(string id) => Scribe.MarkSavedToAya(id);
 }

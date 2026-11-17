@@ -62,7 +62,11 @@ public sealed class AssistController : ObservableObject
     }
 
     /// <summary>At app start: refresh or upgrade the Aya lists in the background.</summary>
-    public Task StartupAsync() => Aya.StartupAsync();
+    public Task StartupAsync()
+    {
+        Review.NameSavedMeetings();
+        return Aya.StartupAsync();
+    }
 
     /// <summary>
     /// Start is allowed when Aya is connected, Claude is ready, no recording runs, the phase is Prepare, start

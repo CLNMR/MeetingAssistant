@@ -23,8 +23,11 @@ public sealed record OpenPointItem(string Id, string Text, OpenPointStatus Statu
 }
 
 /// A checklist row; <see cref="SectionHeader"/> is set when the section changes.
-public sealed record ChecklistItem(string Id, string? SectionHeader, string Text, PlaybookStatus Status, string? Evidence, bool IsChanged)
+public sealed record ChecklistItem(string Id, string? SectionHeader, string Text, PlaybookStatus Status, string? Evidence, bool IsChanged,
+                                   string? Answer = null)
 {
+    /// Claude's answer for a fill-in item, shown under the text.
+    public bool HasAnswer => !string.IsNullOrEmpty(Answer);
     public bool IsCovered => Status == PlaybookStatus.Covered;
     public bool IsPartial => Status == PlaybookStatus.Partial;
 }
@@ -198,7 +201,7 @@ public sealed partial class AssistLiveViewModel : ScreenViewModel
             {
                 string? header = null;
                 if (p.Section != section) { section = p.Section; header = p.Section.Length > 0 ? p.Section : null; }
-                list.Add(new ChecklistItem(p.Id, header, p.Text, p.Status, p.Evidence, State.Changed.Contains($"p:{p.Id}")));
+                list.Add(new ChecklistItem(p.Id, header, p.Text, p.Status, p.Evidence, State.Changed.Contains($"p:{p.Id}"), p.Answer));
             }
             return list;
         }

@@ -52,6 +52,110 @@ public class AssistOpTests
     }
 }
 
+public class OpenPointMergeTests
+{
+    [Fact]
+    public void MergesOpenPoints()
+    {
+        Assert.Equal(new AssistOp.OpenPointMerge(new() { "O2", "O3" }, "O1", "Budget: Freigabe offen"),
+                     AssistOp.Parse("""{"op":"open_point_merge","ids":["O2","O3"],"into":"O1","text":"Budget: Freigabe offen"}"""));
+        Assert.Null(AssistOp.Parse("""{"op":"open_point_merge","ids":[],"into":"O1","text":"x"}"""));
+        Assert.Null(AssistOp.Parse("""{"op":"open_point_merge","ids":["  "],"into":"O1","text":"x"}"""));
+        Assert.Null(AssistOp.Parse("""{"op":"open_point_merge","ids":["O2"],"text":"x"}"""));
+        var s = new AssistState();
+        s.Apply(new AssistOp.SetOpenPoint(new OpenPoint { Id = "O1", Text = "Budget", RaisedBy = "Erika", Status = OpenPointStatus.Answered }));
+        s.Apply(new AssistOp.SetOpenPoint(new OpenPoint { Id = "O2", Text = "Wer gibt frei?" }));
+        s.Apply(new AssistOp.SetOpenPoint(new OpenPoint { Id = "O3", Text = "Lager" }));
+        s.Apply(new AssistOp.SetOpenPoint(new OpenPoint { Id = "O4", Text = "Bis wann?", Status = OpenPointStatus.Parked }));
+        Assert.Equal(new[] { "o:O1" }, s.Apply(new AssistOp.OpenPointMerge(new() { "O1", "O2", "O4" }, "O1", "Budget: Freigabe offen")));
+        Assert.Equal(new[] { "O1", "O3" }, s.OpenPoints.Select(o => o.Id));
+        Assert.Equal("Budget: Freigabe offen", s.OpenPoints[0].Text);
+        Assert.Equal(OpenPointStatus.Open, s.OpenPoints[0].Status);
+        Assert.Equal("Erika", s.OpenPoints[0].RaisedBy);
+        // A new id takes the place of the first merged point.
+        s.Apply(new AssistOp.OpenPointMerge(new() { "O3" }, "O9", "Lager: zu klein"));
+        Assert.Equal(new[] { "O1", "O9" }, s.OpenPoints.Select(o => o.Id));
+        // Unknown ids change nothing.
+        Assert.Empty(s.Apply(new AssistOp.OpenPointMerge(new() { "X1" }, "X2", "x")));
+        Assert.Equal(2, s.OpenPoints.Count);
+    }
+
+    [Fact]
+    public void MergedStatusIsAnsweredOnlyWhenAllPartsAre()
+    {
+        var s = new AssistState();
+        s.Apply(new AssistOp.SetOpenPoint(new OpenPoint { Id = "O1", Text = "a", Status = OpenPointStatus.Answered }));
+        s.Apply(new AssistOp.SetOpenPoint(new OpenPoint { Id = "O2", Text = "b", Status = OpenPointStatus.Answered }));
+        s.Apply(new AssistOp.SetOpenPoint(new OpenPoint { Id = "O3", Text = "c", Status = OpenPointStatus.Parked }));
+        s.Apply(new AssistOp.OpenPointMerge(new() { "O2" }, "O1", "ab"));
+        Assert.Equal(OpenPointStatus.Answered, s.OpenPoints[0].Status);
+        s.Apply(new AssistOp.OpenPointMerge(new() { "O3" }, "O1", "abc"));
+        Assert.Equal(OpenPointStatus.Parked, s.OpenPoints.Single().Status);
+    }
+}
+
+public class ChecklistAnswerTests
+{
+    [Fact]
+    public void EscapedTemplateBecomesAChecklist()
+    {
+        var md = "\\- Erika:&#x20;\n\\- Max:&#x20;\n\\* Beispilop &amp; Co\n1\\. Rückblick\nPreis \\| Menge";
+        var p = TemplateParser.Parse(md);
+        Assert.Equal(new[] { "Erika:", "Max:", "Beispilop & Co", "Rückblick" }, p.Items.Select(i => i.Text));
+        Assert.Equal(new[] { "Preis \\| Menge" }, p.Notes);
+        Assert.Equal("a b  c", TemplateParser.Unescape("a&nbsp;b &#32;c"));
+        Assert.Equal("x\\", TemplateParser.Unescape("x\\"));
+        Assert.Equal("\\a <b>", TemplateParser.Unescape("\\a &lt;b&gt;"));
+    }
+
+    [Fact]
+    public void PlaybookOpCarriesAnAnswer()
+    {
+        Assert.Equal(new AssistOp.SetPlaybook("P1", PlaybookStatus.Covered, null, "Win: Release · Pain: Bugs"),
+                     AssistOp.Parse("""{"op":"playbook","item":"P1","status":"covered","answer":"Win: Release · Pain: Bugs"}"""));
+        var s = new AssistState
+        {
+            Playbook = new() { new PlaybookItem("P1", "Runde", "Erika: Win: % / Pain: %"), new PlaybookItem("P2", "Runde", "Ziel geklärt") },
+        };
+        s.Apply(new AssistOp.SetPlaybook("P1", PlaybookStatus.Covered, null, "Win: Release · Pain: Bugs"));
+        s.Apply(new AssistOp.SetPlaybook("P1", PlaybookStatus.Covered, "x"));      // no answer keeps the old one
+        Assert.Equal("Win: Release · Pain: Bugs", s.Playbook[0].Answer);
+        s.Playbook[1].Answer = "ja";
+        Assert.Equal("## Weekly\n\n### Runde\n- **Erika:** Win: Release · Pain: Bugs\n- Ziel geklärt: ja",
+                     TemplateParser.Block("Weekly", Array.Empty<TemplateTable>(), s.Playbook));
+        var named = new PlaybookItem("P3", "", "Budget:") { Answer = "50k" };
+        Assert.Equal("**Budget:** 50k", TemplateParser.ChecklistLine(named));
+        Assert.Null(TemplateParser.Block("Weekly", Array.Empty<TemplateTable>(), new[] { new PlaybookItem("P4", "", "x") }));
+    }
+
+    [Fact]
+    public void AnswerIsStoredUnderItsKey()
+    {
+        var item = new PlaybookItem("P1", "", "Budget:") { Answer = "50k" };
+        var json = JsonSerializer.Serialize(item, JsonIO.Options);
+        Assert.Contains("\"answer\"", json);
+        Assert.Equal("50k", JsonIO.Deserialize<PlaybookItem>(json).Answer);
+        Assert.Null(JsonIO.Deserialize<PlaybookItem>("""{"id":"P1","section":"","text":"x","status":"missing"}""").Answer);
+    }
+}
+
+public class RecapTitleTests
+{
+    [Fact]
+    public void SessionTitleFromRecap()
+    {
+        var cfg = new AyaConfig();
+        ProposedValue Field(string v, bool include = true) =>
+            new() { Key = cfg.MeetingTitleField, Label = "Title", Kind = AyaFieldKind.Text, Value = v, Include = include };
+        Assert.Equal("Kick-off MUSTER SOLAR", RecapBuilder.Title(new[] { Field("Kick-off MUSTER SOLAR") }, cfg));
+        Assert.Equal("Workshop Beispilop", RecapBuilder.Title(new[] { Field("## Workshop Beispilop\nmehr") }, cfg));
+        Assert.Null(RecapBuilder.Title(new[] { Field("x", include: false) }, cfg));
+        Assert.Null(RecapBuilder.Title(new[] { Field("   ") }, cfg));
+        Assert.Equal(121, RecapBuilder.SessionTitle(new string('a', 200)).Length);
+        Assert.Equal("Zweite Zeile", RecapBuilder.SessionTitle("\n\nZweite Zeile"));
+    }
+}
+
 public class PlaybookParserTests
 {
     [Fact]

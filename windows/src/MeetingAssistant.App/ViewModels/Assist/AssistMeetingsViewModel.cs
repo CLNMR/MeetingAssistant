@@ -7,7 +7,7 @@ using MeetingAssistant.Core.Model;
 namespace MeetingAssistant.App.ViewModels;
 
 /// A past Assist meeting in the Meetings panel (spec 03 §9.1).
-public sealed record MeetingRow(SessionInfo Info, bool IsSelected, double? Progress)
+public sealed record MeetingRow(SessionInfo Info, bool IsSelected, double? Progress, bool SavedToAya = false)
 {
     public string Id => Info.Id;
     public string Title => Info.Title;
@@ -55,7 +55,7 @@ public sealed partial class AssistMeetingsViewModel : ScreenViewModel
     public void Refresh()
     {
         var selected = _assist.ReviewSessionId;
-        Items = _assist.Meetings(Filter).Select(s => new MeetingRow(s, s.Id == selected, _host.Progress(s.Id))).ToList();
+        Items = _assist.Meetings(Filter).Select(s => new MeetingRow(s, s.Id == selected, _host.Progress(s.Id), _host.IsSavedToAya(s.Id))).ToList();
         OnPropertyChanged(nameof(IsEmpty));
         OnPropertyChanged(nameof(EmptyText));
     }

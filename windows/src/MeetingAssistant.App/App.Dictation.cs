@@ -14,6 +14,7 @@ public partial class App
         Dictation = new DictationService(Services, Hud, Shell);
         if (_tray is TrayIcon tray && tray.ContextMenu is { } menu) Dictation.AttachTray(tray.UnfinishedSlot, menu);
         ConnectDictationToAssist();
+        ConnectMeetingShortcut();
         if (DictationTestArguments(Environment.GetCommandLineArgs()) is { } test) _ = RunDictationTestAsync(test);
     }
 

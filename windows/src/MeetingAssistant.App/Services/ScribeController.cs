@@ -30,6 +30,7 @@ public sealed partial class ScribeController : ObservableObject
     readonly AppServices _services;
     readonly Dictionary<string, JobProgress> _progress = new();
     HashSet<string> _assistIds = new();
+    HashSet<string> _savedToAya = new();
     SessionRecorder? _recorder;
     LiveTranscriber? _live;
     TranscriptSegment? _liveSegment;
@@ -85,12 +86,22 @@ public sealed partial class ScribeController : ObservableObject
     {
         var list = SessionStore.List();
         _assistIds = list.Where(s => SessionStore.HasAssistRecord(s.Id)).Select(s => s.Id).ToHashSet();
+        _savedToAya = _assistIds.Where(MeetingAssistant.Core.Assist.AssistRecord.SavedToAya).ToHashSet();
         Sessions = list;
         TranscribingCount = list.Count(s => s.Status is SessionStatus.Queued or SessionStatus.Transcribing);
     }
 
     /// The session was recorded or imported with Assist (has `assist.json`).
     public bool HasAssistRecord(string id) => _assistIds.Contains(id);
+
+    /// The session's recap was saved to Aya (its `assist.json` has a `recapRecordID`; spec 03 §9.1).
+    public bool IsSavedToAya(string id) => _savedToAya.Contains(id);
+
+    /// Marks a session as saved to Aya right after the upload, so the badges change without a reload.
+    public void MarkSavedToAya(string id)
+    {
+        if (_savedToAya.Add(id)) OnPropertyChanged(nameof(Sessions));
+    }
 
     /// A session's current info from disk (null when gone).
     public SessionInfo? Session(string id) => SessionStore.TryLoad(id);

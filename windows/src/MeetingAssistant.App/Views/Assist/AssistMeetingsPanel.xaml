@@ -88,7 +88,17 @@
                                     <DataTrigger Binding="{Binding Status}" Value="Done">
                                         <Setter TargetName="Badge" Property="Text" Value="{StaticResource Icon.CheckCircle}" />
                                         <Setter TargetName="Badge" Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                        <Setter TargetName="Badge" Property="ToolTip" Value="Transcribed" />
                                     </DataTrigger>
+                                    <MultiDataTrigger>
+                                        <MultiDataTrigger.Conditions>
+                                            <Condition Binding="{Binding Status}" Value="Done" />
+                                            <Condition Binding="{Binding SavedToAya}" Value="True" />
+                                        </MultiDataTrigger.Conditions>
+                                        <Setter TargetName="Badge" Property="Text" Value="{StaticResource Icon.SavedToAya}" />
+                                        <Setter TargetName="Badge" Property="Foreground" Value="{DynamicResource PrimaryBrush}" />
+                                        <Setter TargetName="Badge" Property="ToolTip" Value="Transcribed and saved to Aya" />
+                                    </MultiDataTrigger>
                                     <DataTrigger Binding="{Binding Status}" Value="Failed">
                                         <Setter TargetName="Badge" Property="Text" Value="{StaticResource Icon.Warning}" />
                                         <Setter TargetName="Badge" Property="Foreground" Value="{DynamicResource WarningBrush}" />

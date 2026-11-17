@@ -145,9 +145,19 @@ public class AssistPromptTests
     [Fact]
     public void TickMessages()
     {
-        Assert.Equal("CURRENT SUMMARY (rewrite a paragraph with summary_replace when the new lines add to its topic):\n  [0] Lager: klein\n  [1] Budget: 20k\nTRANSCRIPT (new):\n[00:01:05] Me: Hallo\n[user asks: suggest a question now]",
+        Assert.Equal("CURRENT SUMMARY (rewrite a paragraph with summary_replace when the new lines add to its topic):\n  [0] Lager: klein\n  [1] Budget: 20k\nCURRENT OPEN POINTS: (none)\nTRANSCRIPT (new):\n[00:01:05] Me: Hallo\n[user asks: suggest a question now]",
                      AssistPrompts.TickMessage(new[] { "[00:01:05] Me: Hallo" }, new[] { "user asks: suggest a question now" }, new[] { "Lager: klein", "Budget: 20k" }));
         Assert.Equal("[a]\n[b]", AssistPrompts.TickMessage(Array.Empty<string>(), new[] { "a", "b" }, new[] { "x" }));
+    }
+
+    [Fact]
+    public void TickShowsTheCurrentOpenPoints()
+    {
+        var m = AssistPrompts.TickMessage(new[] { "[00:00:01] Erika: Hallo" }, Array.Empty<string>(), Array.Empty<string>(),
+                                          new[] { new OpenPoint { Id = "O1", Text = "Budget: offen" } });
+        Assert.Contains("CURRENT OPEN POINTS (rewrite a point when the new lines add to it; combine points about the same issue with open_point_merge):\n  O1 (open) Budget: offen", m);
+        Assert.Contains("CURRENT OPEN POINTS: (none)", AssistPrompts.TickMessage(new[] { "x" }, Array.Empty<string>()));
+        Assert.DoesNotContain("OPEN POINTS", AssistPrompts.TickMessage(Array.Empty<string>(), new[] { "e" }));
     }
 
     [Fact]
@@ -159,7 +169,7 @@ public class AssistPromptTests
             Summary = new() { "Lager: klein" },
             OpenPoints = new() { new OpenPoint { Id = "O1", Text = "Budget", Status = OpenPointStatus.Parked } },
             Attendees = new() { new Attendee { Name = "Max Beispiel", Role = "Einkauf", Speaker = "Speaker 2" }, new Attendee { Name = "Lena" } },
-            Playbook = new() { new PlaybookItem("P1", "", "x") { Status = PlaybookStatus.Partial } },
+            Playbook = new() { new PlaybookItem("P1", "", "x") { Status = PlaybookStatus.Partial }, new PlaybookItem("P2", "", "Budget:") { Answer = "50k" } },
             AskedQuestions = new() { new Question { Id = "q", Text = "Wie groß?" } },
         };
         var m = AssistPrompts.ResumeMessage(c, st, new[] { "[00:00:01] Erika: Hallo" });
@@ -175,6 +185,7 @@ public class AssistPromptTests
               Lena
             Playbook status:
               P1 partial
+              P2 missing → 50k
             Questions already asked:
               - Wie groß?
 
@@ -189,10 +200,34 @@ public class AssistPromptTests
     public void CatchUpTakesTheLastMinutes()
     {
         var lines = new[] { new AssistLine(0, "Max", "alt"), new AssistLine(200, "Max", "neu"), new AssistLine(320, "Me", "jetzt") };
-        Assert.Equal("MEETING: Kickoff\nUSER (\"Me\" in the transcript): Erika\n\nTRANSCRIPT OF THE LAST 2 MINUTES:\n[00:03:20] Max: neu\n[00:05:20] Me: jetzt",
+        Assert.Equal("MEETING: Kickoff\nUSER (\"Me\" in the transcript): Erika\nLANGUAGE: the language of the transcript\n\nTRANSCRIPT OF THE LAST 2 MINUTES:\n[00:03:20] Max: neu\n[00:05:20] Me: jetzt\n\nAnswer in the language of the transcript.",
                      AssistPrompts.CatchUpPrompt(lines, 2, "Erika", "Kickoff"));
         Assert.Null(AssistPrompts.CatchUpPrompt(Array.Empty<AssistLine>(), 5, "Erika", "x"));
     }
+
+    [Fact]
+    public void CatchUpNamesTheMeetingLanguage()
+    {
+        var lines = new[]
+        {
+            new AssistLine(10, "Erika Musterfrau", "Wir brauchen das Angebot bis Freitag, sonst verschiebt sich der Start."),
+            new AssistLine(40, "Me", "Ich schicke es morgen, die Preise kläre ich noch mit dem Team."),
+        };
+        var p = AssistPrompts.CatchUpPrompt(lines, 2, "Max Beispiel", "MUSTER SOLAR")!;
+        Assert.Contains("LANGUAGE: German", p);
+        Assert.EndsWith("Answer in German.", p);
+        var en = new[] { new AssistLine(5, "Me", "We need the offer by Friday, otherwise the project start moves.") };
+        Assert.Contains("LANGUAGE: English", AssistPrompts.CatchUpPrompt(en, 2, "Me", "")!);
+        Assert.Null(AssistPrompts.SpokenLanguage("ja ok"));
+    }
+
+    [Theory]
+    [InlineData("Nous avons besoin de l'offre pour vendredi, sinon le projet est en retard.", "French")]
+    [InlineData("Necesitamos la oferta para el viernes, si no el proyecto se retrasa.", "Spanish")]
+    [InlineData("Ok, also das ist jetzt eigentlich schon klar, oder? Genau.", "German")]
+    [InlineData("So what is the plan for the rollout, and who will own it?", "English")]
+    public void SpokenLanguageOfCommonSentences(string text, string language) =>
+        Assert.Equal(language, AssistPrompts.SpokenLanguage(text));
 
     [Fact]
     public void RenderedLinesUseWholeSeconds() =>

@@ -86,4 +86,13 @@ public interface IAssistHost
 
     /// Switches the app to Assist mode (opening a review always does).
     void ShowAssist();
+
+    /// Renames a session (the sidebar title).
+    void RenameSession(string id, string title);
+
+    /// Whether a session's recap was saved to Aya (spec 03 §9.1, read on every reload).
+    bool IsSavedToAya(string id);
+
+    /// The recap of a session was just saved to Aya (updates the badges right away).
+    void MarkSavedToAya(string id);
 }

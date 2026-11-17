@@ -1152,3 +1152,4 @@ Exit code 1 with `error: <message>` on stderr on failure.
 - **Preferences:** `aya.config.v2` and `assist.settings.v1` are JSON strings in `<root>/preferences.json`.
 - **Deadline check:** where several time words match a prefix, the longest match wins (on the Mac the order of a dictionary decided, e.g. "wochenende…" could map to week or weekend).
 - **Wording:** "on this PC" where the Mac says "on this Mac".
+- **Catch-up language (§3.8):** no platform language recognizer is used. Core `LanguageGuess` scores the window's words against short lists of very common words of nine languages (English, German, French, Spanish, Italian, Dutch, Portuguese, Swedish, Polish; a word on several lists counts for each in part) plus 0.5 per letter that only some of them use (ä/ö/ü/ß, é/è/ç, ñ, å, ą/ł …). The probability is the top language's share of all points; the same thresholds apply (≥ 20 letters, ≥ 0.5), and the English name comes from the list.

@@ -198,17 +198,33 @@ public sealed record AyaConfig
         }
     }
 
-    /// A list in the Aya web app, or one record in it.
-    public string? WebUrl(AyaSlot slot, string? recordId = null)
-    {
-        if (List(slot) is not { } r) return null;
-        var s = $"https://app.hey-aya.ai/workspace/{Uri.EscapeDataString(r.WorkspaceId)}/recordlist/{Uri.EscapeDataString(r.TechName)}";
-        if (!string.IsNullOrEmpty(recordId)) s += "/record/" + Uri.EscapeDataString(recordId);
-        return s;
-    }
+    /// A record type's list in the Aya web app, or one record of it (<see cref="AyaWebLink"/>).
+    public string? WebUrl(AyaSlot slot, string? recordId = null) =>
+        List(slot) is { } r ? AyaWebLink.Url(r.WorkspaceId, r.TechName, recordId) : null;
 
     /// Where the logo leads: the meetings list, else the organization.
     public string? LogoUrl => WebUrl(AyaSlot.Meetings) ?? OrgUrl;
+}
+
+/// <summary>
+/// Links into the Aya web app (spec 02 §8.4, Web URLs). Both are addressed by the record type's tech name;
+/// the web app's <c>recordlist/&lt;name&gt;</c> pages use a navigation entry's name, which the API does not report.
+/// </summary>
+public static class AyaWebLink
+{
+    /// <c>/workspace/&lt;ws&gt;/record/&lt;type&gt;/&lt;id&gt;</c> for a record, <c>/workspace/&lt;ws&gt;/list/&lt;type&gt;/</c> for the list;
+    /// null when the workspace or the type is empty. An empty record id gives the list.
+    public static string? Url(string workspace, string recordType, string? record = null)
+    {
+        static string? Enc(string? s)
+        {
+            var t = (s ?? "").Trim();
+            return t.Length == 0 ? null : Uri.EscapeDataString(t);
+        }
+        if (Enc(workspace) is not { } ws || Enc(recordType) is not { } type) return null;
+        if (Enc(record) is { } r) return $"https://app.hey-aya.ai/workspace/{ws}/record/{type}/{r}";
+        return $"https://app.hey-aya.ai/workspace/{ws}/list/{type}/";
+    }
 }
 
 /// Reads and writes <see cref="AyaConfig"/> with the Mac's null-vs-missing rules.

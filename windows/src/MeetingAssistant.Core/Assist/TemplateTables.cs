@@ -1,4 +1,6 @@
+using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Text.Json.Serialization;
 
 namespace MeetingAssistant.Core.Assist;
@@ -205,7 +207,7 @@ public static class TemplateParser
         string? lead = null;                    // "Pro genutztem Modul:" prefixes the items below it
         foreach (var raw in AssistText.Lines(markdown))
         {
-            var line = AssistText.TrimWs(raw);
+            var line = AssistText.TrimWs(Unescape(raw));
             if (line.StartsWith('|')) { tableLines.Add(line); lead = null; continue; }
             if (tableLines.Count > 0) FlushTable();
             if (line.Length == 0) continue;
@@ -281,18 +283,87 @@ public static class TemplateParser
         return AssistText.TrimAll(string.Join("\n", lines));
     }
 
-    /// <summary>All filled tables of a meeting as one Markdown block under a heading naming the template; null when none is filled.</summary>
-    public static string? Block(string templateTitle, IEnumerable<TemplateTable> tables)
+    /// <summary>
+    /// The filled-in checklist items and all filled tables of a meeting as one Markdown block under a
+    /// heading naming the template; null when there are neither (spec 02 §6.3).
+    /// </summary>
+    public static string? Block(string templateTitle, IEnumerable<TemplateTable> tables, IEnumerable<PlaybookItem>? checklist = null)
     {
         var used = tables.Where(t => t.FilledCount > 0).ToList();
-        if (used.Count == 0) return null;
+        var answered = (checklist ?? Enumerable.Empty<PlaybookItem>()).Where(i => AssistText.TrimWs(i.Answer ?? "").Length > 0).ToList();
+        if (used.Count == 0 && answered.Count == 0) return null;
         var sb = new StringBuilder($"## {templateTitle}\n");
         var section = "";
+        for (int i = 0; i < answered.Count; i++)
+        {
+            var item = answered[i];
+            if (item.Section != section && item.Section.Length > 0) { section = item.Section; sb.Append($"\n### {section}\n"); }
+            else if (i == 0) sb.Append('\n');
+            sb.Append("- ").Append(ChecklistLine(item)).Append('\n');
+        }
         foreach (var t in used)
         {
             if (t.Section != section && t.Section.Length > 0) { section = t.Section; sb.Append($"\n### {section}\n"); }
             sb.Append('\n').Append(t.Markdown());
         }
         return AssistText.TrimAll(sb.ToString());
+    }
+
+    /// <summary>
+    /// "**Budget:** 50k, Freigabe GF" for a fill-in item ("Erika: Win: % / Pain: %" keeps only "Erika:"
+    /// because the answer repeats the blanks' labels), "Ziel geklärt: ja" otherwise (spec 02 §6.3).
+    /// </summary>
+    public static string ChecklistLine(PlaybookItem item)
+    {
+        var text = AssistText.TrimWs(item.Text);
+        var answer = AssistText.TrimWs((item.Answer ?? "").Replace("\n", " "));
+        if (!text.EndsWith(':') && !text.Contains('%')) return $"{text}: {answer}";
+        var colon = text.IndexOf(':');
+        var label = colon >= 0 ? text[..(colon + 1)] : text;
+        return $"**{label}** {answer}";
+    }
+
+    static readonly (string Entity, string Text)[] NamedEntities =
+        { ("&nbsp;", " "), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&#39;", "'"), ("&apos;", "'") };
+    static readonly Regex NumericEntity = new(@"&#(x[0-9A-Fa-f]{1,6}|[0-9]{1,7});", RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// Undoes the escaping some editors export: HTML entities (<c>&amp;#x20;</c>, <c>&amp;nbsp;</c>, <c>&amp;amp;</c> …) and
+    /// Markdown backslash escapes (<c>\- Erika:</c> is a list item, <c>1\.</c> a number). Table pipes stay escaped (spec 02 §6.1).
+    /// </summary>
+    public static string Unescape(string line)
+    {
+        var s = line;
+        if (s.Contains('&'))
+        {
+            foreach (var (e, c) in NamedEntities) s = s.Replace(e, c, StringComparison.Ordinal);
+            // Numeric entities: &#x20; &#32;
+            for (var m = NumericEntity.Match(s); m.Success; m = NumericEntity.Match(s))
+            {
+                var body = m.Groups[1].Value;
+                long code = body.StartsWith('x') ? Convert.ToInt64(body[1..], 16) : long.Parse(body, CultureInfo.InvariantCulture);
+                var ch = code is >= 0 and <= 0x10FFFF and not (>= 0xD800 and <= 0xDFFF)
+                    ? (code == 0xA0 ? " " : char.ConvertFromUtf32((int)code)) : "";
+                s = s[..m.Index] + ch + s[(m.Index + m.Length)..];
+            }
+            s = s.Replace("&amp;", "&", StringComparison.Ordinal);
+        }
+        if (!s.Contains('\\')) return s;
+        var output = new StringBuilder();
+        var escaped = false;
+        foreach (var ch in s)
+        {
+            if (escaped)
+            {
+                // ASCII punctuation or symbol, except the table pipe.
+                if (ch != '|' && ch is > ' ' and <= '~' && !char.IsLetterOrDigit(ch)) output.Append(ch);
+                else output.Append('\\').Append(ch);
+                escaped = false;
+            }
+            else if (ch == '\\') escaped = true;
+            else output.Append(ch);
+        }
+        if (escaped) output.Append('\\');
+        return output.ToString();
     }
 }

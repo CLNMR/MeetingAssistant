@@ -26,9 +26,9 @@ public sealed partial class DictationService : CommunityToolkit.Mvvm.ComponentMo
     readonly HudViewModel _hud;
     readonly ShellViewModel _shell;
     readonly GlobalHotKeys? _keys;
-    readonly GlobalHotKey? _plainKey, _plusKey;
+    readonly GlobalHotKey? _plainKey, _plusKey, _meetingKey;
     string? _locatedClaude;
-    (bool, HotKeySetting?, HotKeySetting?, string, bool) _applied;
+    (bool, HotKeySetting?, HotKeySetting?, string, bool, HotKeySetting?) _applied;
     MenuItem? _unfinishedSlot;
 
     /// The running app's dictation (null before start-up).
@@ -65,6 +65,8 @@ public sealed partial class DictationService : CommunityToolkit.Mvvm.ComponentMo
             _keys = new GlobalHotKeys(SynchronizationContext.Current);
             _plainKey = _keys.Add();
             _plusKey = _keys.Add();
+            _meetingKey = _keys.Add();
+            _meetingKey.Pressed += () => MeetingShortcutPressed?.Invoke();
             _plainKey.Pressed += () => Controller.Press(DictationMode.Plain);
             _plusKey.Pressed += () => Controller.Press(DictationMode.Plus);
             _plainKey.Released += Release;
@@ -153,6 +155,11 @@ public sealed partial class DictationService : CommunityToolkit.Mvvm.ComponentMo
     [ObservableProperty] string? _plainError;
     /// Error under the Scribe+ shortcut, or null.
     [ObservableProperty] string? _plusError;
+    /// Error under the meeting shortcut (Settings › General), or null.
+    [ObservableProperty] string? _meetingError;
+
+    /// The meeting shortcut was pressed (spec 04 §3.4); the app starts or stops a meeting. Only the press is used.
+    public event Action? MeetingShortcutPressed;
 
     /// Registers the shortcuts again and updates the spare when a relevant preference changed.
     void ApplyPreferences() => ApplyPreferences(force: false);
@@ -160,7 +167,7 @@ public sealed partial class DictationService : CommunityToolkit.Mvvm.ComponentMo
     void ApplyPreferences(bool force)
     {
         var p = _services.Preferences;
-        var key = (p.DictationEnabled, p.DictationHotKey, p.ScribePlusHotKey, p.ScribePlusModel, p.ScribePlusWarm);
+        var key = (p.DictationEnabled, p.DictationHotKey, p.ScribePlusHotKey, p.ScribePlusModel, p.ScribePlusWarm, p.MeetingHotKey);
         if (!force && key.Equals(_applied)) return;
         bool enabledNow = p.DictationEnabled && (force || !_applied.Item1);
         _applied = key;
@@ -176,6 +183,8 @@ public sealed partial class DictationService : CommunityToolkit.Mvvm.ComponentMo
         var p = _services.Preferences;
         PlainError = _plainKey.Register(DictationShortcuts.Plain(p));
         PlusError = _plusKey.Register(DictationShortcuts.Plus(p));
+        // Registered even when dictation is off.
+        if (_meetingKey is not null) MeetingError = _meetingKey.Register(DictationShortcuts.Meeting(p));
     }
 
     /// Loads Parakeet in the background so the first dictation is fast (only with downloaded models).

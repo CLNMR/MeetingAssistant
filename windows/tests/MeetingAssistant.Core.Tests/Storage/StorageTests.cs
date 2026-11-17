@@ -432,6 +432,9 @@ public sealed class SessionFileTests : IDisposable
         Assert.Null(r2["recapUploadedAt"]);
         Assert.Null(r2["recapDraft"]);
         Assert.Equal(SessionStatus.Recorded, second.Status);
+        Assert.True(MeetingAssistant.Core.Assist.AssistRecord.SavedToAya(id));
+        Assert.False(MeetingAssistant.Core.Assist.AssistRecord.SavedToAya(second.Id));
+        Assert.False(MeetingAssistant.Core.Assist.AssistRecord.SavedToAya("no-such-session"));
     }
 
     [Fact]
@@ -549,9 +552,18 @@ public sealed class SessionFileTests : IDisposable
         var json = store.Get(SettingsStore.PreferencesKey)!.AsObject();
         Assert.True(json.ContainsKey("dictationHotKey"));              // written as null
         Assert.Null(json["dictationHotKey"]);
-        Assert.Equal(16, json.Count);
+        Assert.Equal(17, json.Count);
         Assert.True(reread.HideFromScreenSharing);                     // on by default
         Assert.False(Preferences.FromJson(JsonNode.Parse("""{"hideFromScreenSharing":false}""")).HideFromScreenSharing);
+
+        // Meeting shortcut: default Ctrl+Alt+Win+R, explicit null = none, independent of dictation.
+        Assert.Equal(HotKeySetting.DefaultMeeting, reread.MeetingHotKey);
+        Assert.Equal("Ctrl+Alt+Win+R", MeetingAssistant.Core.Dictation.DictationShortcuts.Meeting(reread)!.Display());
+        var noMeeting = Preferences.FromJson(JsonNode.Parse("""{"meetingHotKey":null,"dictationEnabled":false}"""));
+        Assert.Null(noMeeting.MeetingHotKey);
+        Assert.Null(MeetingAssistant.Core.Dictation.DictationShortcuts.Meeting(noMeeting));
+        Assert.NotNull(MeetingAssistant.Core.Dictation.DictationShortcuts.Meeting(Preferences.FromJson(JsonNode.Parse("""{"dictationEnabled":false}"""))));
+        Assert.True(noMeeting.ToJson().ContainsKey("meetingHotKey"));
 
         store.DismissSplitHint("s1");
         store.DismissSplitHint("s2");

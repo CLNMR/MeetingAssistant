@@ -212,6 +212,15 @@ public sealed class ListenController
         ScheduleRebuild();
     }
 
+    /// Names for the running recording's speakers (from Assist); they stay on its lines after the recording ends.
+    public void SetRecordingNames(IReadOnlyDictionary<string, string> names)
+    {
+        if (_segments.LastOrDefault(s => s.IsRecording) is not { } seg) return;
+        if (seg.Names.Count == names.Count && names.All(kv => seg.Names.TryGetValue(kv.Key, out var v) && v == kv.Value)) return;
+        seg.Names = new Dictionary<string, string>(names);
+        ScheduleRebuild();
+    }
+
     /// Coalesce bursts of updates (two tracks, speaker labels) into one redraw every 0.4 s.
     void ScheduleRebuild()
     {

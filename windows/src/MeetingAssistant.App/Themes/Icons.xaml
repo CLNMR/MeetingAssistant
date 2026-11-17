@@ -30,6 +30,8 @@
     <sys:String x:Key="Icon.Warning">&#xE7BA;</sys:String>
     <sys:String x:Key="Icon.Check">&#xE73E;</sys:String>
     <sys:String x:Key="Icon.CheckCircle">&#xE930;</sys:String>
+    <!-- Cloud: a transcribed meeting whose recap was saved to Aya. -->
+    <sys:String x:Key="Icon.SavedToAya">&#xE753;</sys:String>
     <sys:String x:Key="Icon.Info">&#xE946;</sys:String>
     <sys:String x:Key="Icon.More">&#xE712;</sys:String>
     <sys:String x:Key="Icon.Lock">&#xE72E;</sys:String>

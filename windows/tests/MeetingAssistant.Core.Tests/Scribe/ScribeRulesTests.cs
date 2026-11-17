@@ -262,6 +262,26 @@ public class FloatingTranscriptTests
     }
 
     [Fact]
+    public void RecordingSegmentShowsTheNamesGivenInAssist()
+    {
+        var seg = new TranscriptSegment(Start, MeetingMode.Call, true)
+        {
+            Lines = new[] { L("a", 0, 1, "Hallo", "system-1", track: Track.System), L("b", 2, 3, "Hi", "system-2", track: Track.System) },
+            Names = new Dictionary<string, string> { ["system-2"] = "Erika Musterfrau" },
+        };
+        var p = FloatingTranscript.Build(new[] { seg }, "", DateTime.MinValue);
+        Assert.Equal(new[] { "Remote 1", "Erika Musterfrau" }, p.Select(x => x.Speaker));
+
+        var state = new MeetingAssistant.Core.Assist.AssistState
+        {
+            SpeakerNames = new() { ["system-1"] = "Speaker 2", ["system-2"] = "Max Beispiel", ["mic-1"] = "Speaker 3" },
+            Attendees = new() { new MeetingAssistant.Core.Assist.Attendee { Name = "Erika Musterfrau", Speaker = "Speaker 2" } },
+        };
+        var names = MeetingAssistant.Core.Assist.SpeakerNames.ForFloatingWindow(state);
+        Assert.Equal(new Dictionary<string, string> { ["system-1"] = "Erika Musterfrau", ["system-2"] = "Max Beispiel" }, names);
+    }
+
+    [Fact]
     public void FinalAfterPendingGoesToPending()
     {
         var seg = new TranscriptSegment(Start, MeetingMode.InPerson, true)

@@ -40,6 +40,20 @@ public sealed class AssistRecord
     public static string PathFor(string sessionID) => AppPaths.AssistFile(sessionID);
     /// The record of a session, or null.
     public static AssistRecord? Load(string sessionID) => JsonIO.TryRead<AssistRecord>(PathFor(sessionID), out var r) ? r : null;
+    /// <summary>Whether the session's recap was saved to Aya. Reads only <c>recapRecordID</c>, so listing stays cheap.</summary>
+    public static bool SavedToAya(string sessionID)
+    {
+        try
+        {
+            var path = PathFor(sessionID);
+            if (!File.Exists(path)) return false;
+            using var stream = File.OpenRead(path);
+            using var doc = JsonDocument.Parse(stream);
+            return doc.RootElement.ValueKind == JsonValueKind.Object
+                && doc.RootElement.TryGetProperty("recapRecordID", out var id) && id.ValueKind == JsonValueKind.String;
+        }
+        catch (Exception) { return false; }
+    }
     public void Save(string sessionID) => JsonIO.Write(this, PathFor(sessionID));
     public AssistRecord Clone() => JsonIO.Deserialize<AssistRecord>(JsonSerializer.Serialize(this, JsonIO.Options));
 }
@@ -85,6 +99,24 @@ public sealed class CRMProposal
 /// <summary>The post-meeting steps: recap draft, values for Aya, tables, CRM proposals (spec 02 §7).</summary>
 public static class RecapBuilder
 {
+    /// <summary>The recap's title field value, when it is ticked and filled, cleaned with <see cref="SessionTitle"/> (spec 03 §8.2).</summary>
+    public static string? Title(IEnumerable<ProposedValue> fields, AyaConfig config)
+    {
+        var f = fields.FirstOrDefault(x => x.Key == config.MeetingTitleField);
+        if (f is null || !f.Include) return null;
+        var t = SessionTitle(f.Value);
+        return t.Length == 0 ? null : t;
+    }
+
+    /// <summary>A title fit for a session name: the first non-empty line, without Markdown heading marks, at most 120 characters plus "…".</summary>
+    public static string SessionTitle(string s)
+    {
+        var t = AssistText.Lines(s).FirstOrDefault(l => l.Length > 0) ?? "";
+        t = AssistText.TrimWs(t).TrimStart('#');
+        t = AssistText.TrimWs(t);
+        return AssistText.Count(t) > 120 ? AssistText.TrimWs(AssistText.Prefix(t, 120)) + "…" : t;
+    }
+
     /// <summary>The transcript as text lines: the final transcript's turns when it has any, else the live lines (spec 02 §7.2).</summary>
     public static List<string> TranscriptLines(string sessionID, IEnumerable<AssistLine> fallback)
     {
@@ -225,7 +257,7 @@ public static class RecapBuilder
             if (schema.TryCoerce(p.Value, p.Key, out var v)) values[p.Key] = v;
         // Filled tables go under a heading named after the template, replacing that block if it is there.
         if (config.TablesField(schema) is { } key
-            && TemplateParser.Block(record.Context.PlaybookTitle ?? "Template", tables ?? Array.Empty<TemplateTable>()) is { } block)
+            && TemplateParser.Block(record.Context.PlaybookTitle ?? "Template", tables ?? Array.Empty<TemplateTable>(), record.State.Playbook) is { } block)
         {
             var b = (values.TryGetValue(key, out var cur) ? cur.AsString() : null) ?? existing?[key].AsString() ?? "";
             values[key] = TemplateParser.Merge(b, block);
@@ -526,6 +558,9 @@ public static class RecapBuilder
         s += "\n\nLIVE SUMMARY:\n" + string.Join("\n", r.State.Summary.Select(x => $"- {x}"));
         s += "\n\nOPEN POINTS:\n" + string.Join("\n", r.State.OpenPoints.Select(o => $"- [{AssistPrompts.Raw(o.Status)}] {o.Text}"));
         s += "\n\nQUESTIONS ASKED:\n" + string.Join("\n", r.State.AskedQuestions.Select(q => $"- {q.Text}"));
+        var filled = r.State.Playbook.Where(p => !string.IsNullOrEmpty(p.Answer)).ToList();
+        if (filled.Count > 0)
+            s += "\n\nCHECKLIST ANSWERS:\n" + string.Join("\n", filled.Select(p => $"- {TemplateParser.ChecklistLine(p)}"));
         return s;
     }
 }

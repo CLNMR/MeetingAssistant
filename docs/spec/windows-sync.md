@@ -4,9 +4,9 @@ The `port-to-windows` skill keeps this file up to date.
 
 | | |
 |---|---|
-| Last ported changelog entry | 2026-11-11: Markdown editor for the recap fields |
-| Spec commit ported from | uncommitted spec changes of 2026-11-11 (after 8308d10) |
-| Last run | 2026-11-11 |
+| Last ported changelog entry | 2026-11-17: Global shortcut to start or stop a meeting |
+| Spec commit ported from | 8b02924 (plus uncommitted Windows notes of 2026-11-17) |
+| Last run | 2026-11-17 |
 
 ## What the first run built
 
@@ -27,6 +27,19 @@ Ported "Ghost mode for the floating live transcript": rule `GhostMode` (Core, wi
 
 Ported "Markdown editor for the recap fields": Core `Markdown` (blocks, inline runs, highlighting, editing commands; the same 21 test cases as the Mac) and the `MarkdownField` control (preview built from WPF elements, AvalonEdit editor with a colouriser, formatting bar, keys). New package: AvalonEdit 6.3.1.120.
 
+## Run of 2026-11-17 (nine entries, 2026-11-13 … 2026-11-17)
+
+- **Open at login:** `LoginItem` (Platform: `HKCU\…\Run` value, `StartupApproved` = needs approval), `LaunchAtLogin` (App), the first-open question after the main window shows, and the General toggle with the approval caption, *Open Startup Apps* and the red error.
+- **"What did I miss?" in the meeting's language:** new `catchUpSystem` text, `LANGUAGE:` line and `Answer in …` in the prompt; Core `LanguageGuess` (common-word lists, no package) behind `AssistPrompts.SpokenLanguage`.
+- **Floating window shows Assist's speaker names:** `TranscriptSegment.Names`, `SpeakerNames.ForFloatingWindow`, `ListenController.SetRecordingNames`, fed from the live session's state while recording.
+- **Fewer, shorter open points:** system prompt item 3, op `open_point_merge` (parse and apply), `CURRENT OPEN POINTS` in the tick message. The prompt texts match the Swift literals again (the prompt test was red).
+- **Sidebar meetings carry their Aya title:** `RecapBuilder.Title`/`SessionTitle`, `AssistReviewController.NameSession` after a draft and after saving, `NameSavedMeetings` at start; `IAssistHost.RenameSession`.
+- **Checklist answers and escaped templates:** `PlaybookItem.answer`, the `answer` of the `playbook` op, the resume message's `→ <answer>`, the answer under the item in the Checklist panel, `CHECKLIST ANSWERS` in the recap context, `TemplateParser.ChecklistLine`, the checklist part of `Block`, and `TemplateParser.Unescape`.
+- **"Open in Aya" links:** `AyaWebLink.Url` (`/record/<type>/<id>`, `/list/<type>/`); logo and review link use it.
+- **Saved-to-Aya badge:** `AssistRecord.SavedToAya` (reads only `recapRecordID`), saved ids in `ScribeController`, cloud badge with tooltips in both lists, updated right after a save.
+- **Meeting shortcut:** `meetingHotKey` (default Ctrl+Alt+Win+R, explicit null = none), a third hook slot in `DictationService` (registered even with dictation off), the press handler in `App.Meeting.cs`, and the General shortcut row with caption and error.
+- Tests: 475 (all ported Swift cases of these entries, plus language, merge-status, naming, floating-name and preference cases).
+
 ## Open items
 
 Not yet run on Windows (needs a Windows machine):
@@ -36,9 +49,14 @@ Not yet run on Windows (needs a Windows machine):
 - Credential Manager, single instance, tray icon, Media Foundation import of mp3/m4a, Windows spell checker.
 - Hiding the floating window and the dictation HUD from screen sharing (Teams whole-screen share, Snipping Tool), and switching the setting off and on with the floating window open.
 - Ghost mode: fade and click-through under the cursor, Ctrl to use the window, and that the layered window still renders correctly and stays hidden from screen sharing.
+- Open at login: the first-open question, the toggle writing and removing the Run value, starting at sign-in, and switching it off in Settings › Apps › Startup (the toggle then shows the approval caption).
+- Meeting shortcut Ctrl+Alt+Win+R: start and stop in Scribe and in Assist (also from a Review), the app coming to the front from the tray or minimised, Start not opening when Win is released, the conflict error, and recording a new shortcut in Settings › General.
+- Saved-to-Aya badge (Cloud glyph U+E753 in Segoe Fluent Icons/MDL2) in both lists, and the sidebar title changing after a draft and an upload.
+- The checklist answer under the item in the live Checklist panel (selectable, wraps), and the floating window labelling recorded lines with names given in Assist.
 - Markdown field: preview layout (lists, tables, checkboxes with Segoe Fluent glyphs), switching modes, the toolbar glyphs, heading sizes and fonts in the AvalonEdit highlighting, the editor growing from 90 to 420 px, Enter/Tab/Shift+Tab/Ctrl+B/Ctrl+I/Esc, undo, typing with an IME, and that the review autosave still fires while typing.
 
 Known differences, by design or for now:
+- The catch-up language is guessed from lists of common words of nine languages instead of a trained recognizer; short or mixed windows fall back to "the language of the transcript".
 - Qwen3-ASR and the language check are not available (no word-timestamp aligner in sherpa-onnx).
 - Transcription runs on the CPU, about 5× slower than the Mac. Live speaker separation re-diarizes a 20 s window every 3 s and is less accurate than the Mac's streaming model.
 - Word recall on quiet room audio is lower than on the Mac (about 78 % of the Mac's words on one in-person meeting; 97 % on a call).

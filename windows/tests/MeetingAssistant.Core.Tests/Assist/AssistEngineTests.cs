@@ -97,7 +97,7 @@ public class AssistEngineTests
         Assert.Single(r.Conv.Sent);
         await r.Tick(0.6);                                      // 60.1 s ≥ maxInterval 60
         Assert.Equal(2, r.Conv.Sent.Count);
-        Assert.Equal("CURRENT SUMMARY: (empty)\nTRANSCRIPT (new):\n[00:00:01] Speaker 1: eins zwei drei", r.Conv.Sent[1]);
+        Assert.Equal("CURRENT SUMMARY: (empty)\nCURRENT OPEN POINTS: (none)\nTRANSCRIPT (new):\n[00:00:01] Speaker 1: eins zwei drei", r.Conv.Sent[1]);
         await r.Answer(Q);
 
         await r.Lines((70, "Speaker 1", string.Join(" ", Enumerable.Repeat("wort", 60))));

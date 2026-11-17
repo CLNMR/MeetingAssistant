@@ -25,14 +25,32 @@ public sealed partial class GeneralSettingsViewModel : ObservableObject
 
     public GeneralSettingsViewModel()
     {
-        _services.PreferencesChanged += () => AppServices.Ui(() => OnPropertyChanged(string.Empty));
+        Meeting = new Dictation.ShortcutSlotViewModel(() => P.MeetingHotKey, v => _services.UpdatePreferences(p => p.MeetingHotKey = v),
+                                                      Core.Input.HotKey.DefaultMeeting);
+        _services.PreferencesChanged += () => AppServices.Ui(() => { OnPropertyChanged(string.Empty); Meeting.Refresh(); });
         ScribeController.Shared.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(ScribeController.InputDevices)) OnPropertyChanged(nameof(Devices));
         };
+        if (Dictation.DictationService.Shared is { } d)
+            d.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(Dictation.DictationService.MeetingError)) OnPropertyChanged(nameof(MeetingError)); };
     }
 
     Preferences P => _services.Preferences;
+
+    /// *Open MeetingAssistant at login* (spec 04 §6.1): the registry, not the preferences.
+    public LaunchAtLogin Login => LaunchAtLogin.Shared;
+
+    /// *Start or stop a meeting* shortcut (`meetingHotKey`, default Ctrl+Alt+Win+R).
+    public Dictation.ShortcutSlotViewModel Meeting { get; }
+
+    /// Registration error in red under the meeting shortcut, or null.
+    public string? MeetingError => Dictation.DictationService.Shared?.MeetingError;
+
+    public const string MeetingCaption =
+        "Works in any app. Starts a meeting when none is running (in Assist when Assist is open and ready, otherwise a Scribe recording) and stops the running one. MeetingAssistant comes to the front either way.";
+
+    [RelayCommand] void OpenStartupApps() => Login.OpenSettings();
 
     public string MyName
     {

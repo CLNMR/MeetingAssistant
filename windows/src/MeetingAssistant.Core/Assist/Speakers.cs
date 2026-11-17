@@ -23,6 +23,22 @@ public static class SpeakerNames
         return attendees.FirstOrDefault(a => a.Speaker == label && !IsGeneric(a.Name))?.Name ?? label;
     }
 
+    /// <summary>
+    /// Raw live label → name, for the speakers named during the meeting (renamed by the user, or matched to an
+    /// attendee by Claude); generic names are left out. Labels the recording's lines in the floating window
+    /// (spec 01, Floating live transcript window: Paragraphs).
+    /// </summary>
+    public static Dictionary<string, string> ForFloatingWindow(AssistState state)
+    {
+        var output = new Dictionary<string, string>();
+        foreach (var (raw, n) in state.SpeakerNames ?? new())
+        {
+            var name = Resolved(n, state.Attendees);
+            if (!IsGeneric(name)) output[raw] = name;
+        }
+        return output;
+    }
+
     /// <summary>Minimum votes for a speaker to get a name (spec 02 §5.3).</summary>
     public const int MinVotes = 4;
     /// <summary>Minimum share of the best name (spec 02 §5.3).</summary>

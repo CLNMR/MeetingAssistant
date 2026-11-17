@@ -17,6 +17,9 @@ public sealed class TranscriptSegment(DateTime start, MeetingMode mode, bool isR
     public IReadOnlyList<LiveLine> Lines { get; set; } = Array.Empty<LiveLine>();
     /// The transcriber still runs (finished segments can be dropped).
     public bool IsActive { get; set; } = true;
+    /// Names given to live speaker labels during the meeting (Assist), e.g. "system-1" → "Erika Musterfrau".
+    /// They stay on the lines after the recording ends.
+    public IReadOnlyDictionary<string, string> Names { get; set; } = new Dictionary<string, string>();
 }
 
 /// A paragraph of the floating window: consecutive lines of one speaker.
@@ -73,7 +76,7 @@ public static class FloatingTranscript
                 var date = seg.Start.AddSeconds(l.Start);
                 if (date < hiddenBefore) continue;
                 var key = l.Speaker ?? "?";
-                var name = labels.Label(l.Speaker);
+                var name = l.Speaker is { } sp && seg.Names.TryGetValue(sp, out var given) ? given : labels.Label(l.Speaker);
                 var colorKey = $"{si}-{key}";
                 if (output.Count > 0 && output[^1] is var last && last.Speaker == name && last.ColorKey == colorKey
                     && (date - last.Date).TotalSeconds < ParagraphSpan)

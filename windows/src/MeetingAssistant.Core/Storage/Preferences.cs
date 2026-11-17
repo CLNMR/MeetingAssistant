@@ -21,6 +21,8 @@ public sealed record HotKeySetting(int KeyCode, int Modifiers, bool ModifierOnly
     public static HotKeySetting DefaultPlain => new(VkRControl, 0, true);
     /// Windows default for Scribe+: Right Ctrl + Right Shift (a superset of the plain one, so it upgrades a running dictation).
     public static HotKeySetting DefaultPlus => FromModifierKeys(new[] { VkRControl, VkRShift });
+    /// Windows default for the meeting shortcut: Ctrl+Alt+Win+R (the Mac's ⌃⌥⌘R).
+    public static HotKeySetting DefaultMeeting => new(0x52, 0x2 | 0x1 | 0x8, false);
 
     /// Modifier-only shortcut from the keys held together.
     public static HotKeySetting FromModifierKeys(IEnumerable<int> keys)
@@ -107,6 +109,8 @@ public sealed class Preferences
     public bool MuteWhileDictating { get; set; } = true;
     /// Keep the floating live transcript and the dictation HUD out of screen sharing and screenshots.
     public bool HideFromScreenSharing { get; set; } = true;
+    /// Global shortcut that starts a meeting, or stops the running one, and brings the app to the front (null = none).
+    public HotKeySetting? MeetingHotKey { get; set; } = HotKeySetting.DefaultMeeting;
 
     /// The user's name for labels: trimmed `MyName`, or "Me" when empty.
     public string EffectiveName => MyName.Trim().Length == 0 ? "Me" : MyName.Trim();
@@ -129,6 +133,7 @@ public sealed class Preferences
             ["scribePlusContext"] = ScribePlusContext, ["scribePlusWarm"] = ScribePlusWarm, ["scribePlusModel"] = ScribePlusModel,
             ["fitToCursor"] = FitToCursor, ["muteWhileDictating"] = MuteWhileDictating,
             ["hideFromScreenSharing"] = HideFromScreenSharing,
+            ["meetingHotKey"] = MeetingHotKey?.ToJson(),            // explicit null = "no shortcut"
         };
         if (InputDeviceUID is not null) o["inputDeviceUID"] = InputDeviceUID;
         return o;
@@ -162,6 +167,7 @@ public sealed class Preferences
         if (Bool("fitToCursor") is { } fc) p.FitToCursor = fc;
         if (Bool("muteWhileDictating") is { } mu) p.MuteWhileDictating = mu;
         if (Bool("hideFromScreenSharing") is { } hs) p.HideFromScreenSharing = hs;
+        if (o.ContainsKey("meetingHotKey")) p.MeetingHotKey = HotKeySetting.FromJson(o["meetingHotKey"]);
         return p;
     }
 

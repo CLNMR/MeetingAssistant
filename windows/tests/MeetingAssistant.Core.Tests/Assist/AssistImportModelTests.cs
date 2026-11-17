@@ -28,6 +28,9 @@ sealed class ImportHost : IAssistHost
     public void DeleteSession(string id) { }
     public void LearnSpeaker(string name, float[] embedding) { }
     public void ShowAssist() { }
+    public void RenameSession(string id, string title) { }
+    public bool IsSavedToAya(string id) => false;
+    public void MarkSavedToAya(string id) { }
 
     public Task<SessionInfo> ImportFilesAsync(string mic, string? system, MeetingMode mode, string title, DateTime startedAt)
     {

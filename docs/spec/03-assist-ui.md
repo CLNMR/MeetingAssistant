@@ -394,7 +394,7 @@ Editing commands of the editor (positions in UTF-16 units):
 - After saving to Aya, the session is renamed to the title that was written (the value sent for the configured title field, else the title of the returned record). This always applies, also over a name the user typed.
 - After a recap draft, the session is renamed to the draft's title field (only when ticked and filled), but only while the session still has its automatic name: `Meeting` or the context title it got at the start.
 - At app start, every Assist session already saved to Aya whose name is still automatic gets the title from its stored recap draft (same rule).
-- The title is cleaned for use as a name: first line only, leading `#` marks and spaces removed, cut to 120 characters plus `…`. An empty result changes nothing.
+- The title is cleaned for use as a name: its first non-empty line only, leading `#` marks and spaces removed, cut to 120 characters (trailing spaces of the cut removed) plus `…`. An empty result, or a name equal to the current one, changes nothing.
 
 #### 8.3 Template tables (review)
 Title "Template tables". The subtitle is "Saved with the recap into “<field label>”. Long tables only with the rows that were answered." or, when no field is configured, "Not saved to Aya (Settings › Assist › Template tables).".
@@ -649,4 +649,6 @@ It is used for layout checks without a display. The Windows port only needs it a
 - "Aya lists updated" uses "just now", "N min ago", "N hr ago", "yesterday", "N days ago" (the Mac uses the system's relative-date wording).
 - Import: the date is a date picker plus an HH:mm field. The Aya select list is a popup that closes on an outside click.
 - Wording: "stored securely" instead of "stored in the Keychain", "Show in Explorer", Ctrl+Shift+Space for Suggest now.
+- Saved-to-Aya badge (Meetings list and Recordings list): the Segoe Fluent "Cloud" glyph (U+E753) in the primary colour. `ScribeController` keeps the saved ids (read with `AssistRecord.SavedToAya` on every reload) and `MarkSavedToAya` updates them right after an upload. Session renaming goes through `IAssistHost.RenameSession`.
+- Floating window names: the app watches the running `AssistLiveSession.State` and passes `SpeakerNames.ForFloatingWindow(state)` to `ListenController.SetRecordingNames` while recording.
 - Markdown field: `Controls/MarkdownField.cs`. The editor is AvalonEdit (`TextEditor`) with a `DocumentColorizingTransformer` fed by Core `Markdown.Highlight`; the preview is built from WPF elements (`TextBlock` inlines, `Hyperlink`, `Grid` tables). Shortcuts use Ctrl (Ctrl+B, Ctrl+I, Ctrl+E, Ctrl+Shift+X). Differences: the editor has no spell checking, and the preview text is not selectable (a click opens the editor). Toolbar labels are text ("H", "B", "I", "S", "</>", "1.") or Segoe Fluent glyphs (bulleted list, checklist, quote); task boxes use the Checkbox / CheckboxComposite glyphs.

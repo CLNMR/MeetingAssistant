@@ -161,6 +161,15 @@
                                         <Setter TargetName="Badge" Property="Foreground" Value="{DynamicResource TextSubtleBrush}" />
                                         <Setter TargetName="Badge" Property="ToolTip" Value="Not transcribed yet" />
                                     </DataTrigger>
+                                    <MultiDataTrigger>
+                                        <MultiDataTrigger.Conditions>
+                                            <Condition Binding="{Binding Status}" Value="Done" />
+                                            <Condition Binding="{Binding SavedToAya}" Value="True" />
+                                        </MultiDataTrigger.Conditions>
+                                        <Setter TargetName="Badge" Property="Text" Value="{StaticResource Icon.SavedToAya}" />
+                                        <Setter TargetName="Badge" Property="Foreground" Value="{DynamicResource PrimaryBrush}" />
+                                        <Setter TargetName="Badge" Property="ToolTip" Value="Transcribed and saved to Aya" />
+                                    </MultiDataTrigger>
                                 </DataTemplate.Triggers>
                             </DataTemplate>
                         </ListBox.ItemTemplate>

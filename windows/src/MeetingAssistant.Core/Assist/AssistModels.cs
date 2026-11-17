@@ -19,6 +19,8 @@ public sealed record PlaybookItem
     [JsonPropertyName("text")] public string Text { get; set; } = "";
     [JsonPropertyName("status")] public PlaybookStatus Status { get; set; } = PlaybookStatus.Missing;
     [JsonPropertyName("evidence")] public string? Evidence { get; set; }
+    /// For a fill-in item ("Budget:", "Win: % / Pain: %"): what was said, in a few words.
+    [JsonPropertyName("answer")] public string? Answer { get; set; }
 
     public PlaybookItem() { }
     public PlaybookItem(string id, string section, string text) { Id = id; Section = section; Text = text; }
@@ -373,6 +375,26 @@ public sealed class AssistState
                     else OpenPoints.Add(p with { });
                     return new() { $"o:{p.Id}" };
                 }
+            case AssistOp.OpenPointMerge m:
+                {
+                    var merged = OpenPoints.Where(x => m.Ids.Contains(x.Id) && x.Id != m.Into).ToList();
+                    var target = OpenPoints.FirstOrDefault(x => x.Id == m.Into);
+                    if (target is null && merged.Count == 0) return new();
+                    // The combined point stays open while any part of it is open.
+                    var parts = (target is null ? new List<OpenPoint>() : new List<OpenPoint> { target }).Concat(merged).ToList();
+                    var status = parts.Any(x => x.Status == OpenPointStatus.Open) ? OpenPointStatus.Open
+                        : parts.All(x => x.Status == OpenPointStatus.Answered) ? OpenPointStatus.Answered : OpenPointStatus.Parked;
+                    var point = new OpenPoint { Id = m.Into, Text = m.Text, RaisedBy = target?.RaisedBy ?? merged.FirstOrDefault()?.RaisedBy, Status = status };
+                    var ti = OpenPoints.FindIndex(x => x.Id == m.Into);
+                    if (ti >= 0) OpenPoints[ti] = point;
+                    else
+                    {
+                        var fi = OpenPoints.FindIndex(x => x.Id == merged[0].Id);
+                        if (fi >= 0) OpenPoints[fi] = point;   // a new id takes the place of the first merged point
+                    }
+                    OpenPoints.RemoveAll(x => m.Ids.Contains(x.Id) && x.Id != m.Into);
+                    return new() { $"o:{m.Into}" };
+                }
             case AssistOp.SetAttendee sa2:
                 {
                     var a = sa2.Attendee;
@@ -399,6 +421,7 @@ public sealed class AssistState
                     if (i < 0) return new();
                     Playbook[i].Status = pb.Status;
                     if (pb.Evidence is not null) Playbook[i].Evidence = pb.Evidence;
+                    if (pb.Answer is not null) Playbook[i].Answer = pb.Answer;
                     return new() { $"p:{pb.Item}" };
                 }
             case AssistOp.TableCell tc:
@@ -429,7 +452,13 @@ public abstract record AssistOp
     public sealed record SummaryReplace(int Index, string Text) : AssistOp;
     public sealed record SetOpenPoint(OpenPoint Point) : AssistOp;
     public sealed record SetAttendee(Attendee Attendee) : AssistOp;
-    public sealed record SetPlaybook(string Item, PlaybookStatus Status, string? Evidence) : AssistOp;
+    /// Combines points about the same issue: <c>Into</c> gets <c>Text</c>, the others are removed.
+    public sealed record OpenPointMerge(List<string> Ids, string Into, string Text) : AssistOp
+    {
+        public bool Equals(OpenPointMerge? o) => o is not null && Ids.SequenceEqual(o.Ids) && Into == o.Into && Text == o.Text;
+        public override int GetHashCode() => HashCode.Combine(Ids.Count, Into, Text);
+    }
+    public sealed record SetPlaybook(string Item, PlaybookStatus Status, string? Evidence, string? Answer = null) : AssistOp;
     public sealed record TableCell(string Row, string Column, string Value, string? Evidence) : AssistOp;
 
     static readonly Dictionary<string, PlaybookStatus> PlaybookStatuses =
@@ -491,6 +520,13 @@ public abstract record AssistOp
                     var st = OpenStatuses.TryGetValue(Str(v, "status") ?? "open", out var x) ? x : OpenPointStatus.Open;
                     return new SetOpenPoint(new OpenPoint { Id = id, Text = text, RaisedBy = Str(v, "raised_by"), Status = st });
                 }
+            case "open_point_merge":
+                {
+                    var ids = (v["ids"] as JsonArray ?? new JsonArray()).Select(x => x.AsString()).Where(x => x is not null)
+                        .Select(x => AssistText.TrimWs(x!)).Where(x => x.Length > 0).ToList();
+                    if (Str(v, "into") is not { } into || Str(v, "text") is not { } text || ids.Count == 0) return null;
+                    return new OpenPointMerge(ids, into, text);
+                }
             case "attendee":
                 if (Str(v, "name") is not { } name) return null;
                 return new SetAttendee(new Attendee
@@ -501,7 +537,7 @@ public abstract record AssistOp
             case "playbook":
                 {
                     if (Str(v, "item") is not { } item || !PlaybookStatuses.TryGetValue(Str(v, "status") ?? "", out var st)) return null;
-                    return new SetPlaybook(item, st, Str(v, "evidence"));
+                    return new SetPlaybook(item, st, Str(v, "evidence"), Str(v, "answer"));
                 }
             case "table_cell":
                 {

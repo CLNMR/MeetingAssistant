@@ -288,7 +288,12 @@
                                                             <TextBlock x:Name="Ic" Text="{StaticResource AIcon.Circle}" FontFamily="{StaticResource Font.Icon}" FontSize="13"
                                                                        Foreground="{DynamicResource TextSubtleBrush}" />
                                                         </Button>
-                                                        <TextBlock x:Name="Tx" Text="{Binding Text}" FontSize="13" TextWrapping="Wrap" Foreground="{DynamicResource TextBrush}" />
+                                                        <StackPanel>
+                                                            <TextBlock x:Name="Tx" Text="{Binding Text}" FontSize="13" TextWrapping="Wrap" Foreground="{DynamicResource TextBrush}" />
+                                                            <TextBox Style="{StaticResource Aya.SelectableText}" Text="{Binding Answer, Mode=OneWay}" FontSize="12"
+                                                                     Margin="0,2,0,0" Foreground="{DynamicResource AgentTextMidBrush}"
+                                                                     Visibility="{Binding HasAnswer, Converter={StaticResource VisibleWhen}}" />
+                                                        </StackPanel>
                                                     </DockPanel>
                                                 </Grid>
                                             </StackPanel>

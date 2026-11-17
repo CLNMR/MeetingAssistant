@@ -418,7 +418,7 @@ public sealed class AssistEngine
         try
         {
             Send(AssistPrompts.TickMessage(lines.Select(l => l.Rendered).ToList(),
-                                           evs.Count == 0 && lines.Count == 0 ? new List<string> { SuggestEvent } : evs, _state.Summary));
+                                           evs.Count == 0 && lines.Count == 0 ? new List<string> { SuggestEvent } : evs, _state.Summary, _state.OpenPoints));
             _unansweredEvents = evs;
         }
         catch (Exception)
