@@ -37,8 +37,20 @@ struct MeetingAssistantApp: App {
         MenuBarExtra {
             MenuBarContent().environmentObject(state)
         } label: {
-            Image(systemName: state.isRecording ? "record.circle.fill" : "waveform")
+            MenuBarLabel().environmentObject(state)
         }
+    }
+}
+
+/// The menu bar icon. It is always on screen, so it also gives AppState a way to reopen the
+/// main window after it was closed (SwiftUI's openWindow is only available inside views).
+struct MenuBarLabel: View {
+    @EnvironmentObject var state: AppState
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Image(systemName: state.isRecording ? "record.circle.fill" : "waveform")
+            .onAppear { state.reopenMainWindow = { openWindow(id: "main") } }
     }
 }
 

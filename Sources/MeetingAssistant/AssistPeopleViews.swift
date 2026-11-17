@@ -125,7 +125,8 @@ struct AssistMeetingsPanel: View {
             ScrollView {
                 LazyVStack(spacing: 2) {
                     ForEach(items) { s in
-                        SessionRow(info: s, progress: state.progress[s.id], selected: assist.reviewSessionID == s.id)
+                        SessionRow(info: s, progress: state.progress[s.id], selected: assist.reviewSessionID == s.id,
+                                   savedToAya: state.savedToAyaIDs.contains(s.id))
                             .onTapGesture { if assist.reviewSessionID != s.id { assist.openReview(s.id) } }
                             .contextMenu {
                                 Button("Show Transcript") { state.appMode = .scribe; state.selection = .session(s.id) }

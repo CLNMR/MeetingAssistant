@@ -24,6 +24,11 @@ public struct AssistRecord: Codable, Sendable {
 
     public static func url(_ sessionID: String) -> URL { AppPaths.session(sessionID).appendingPathComponent("assist.json") }
     public static func load(_ sessionID: String) -> AssistRecord? { try? JSONIO.read(AssistRecord.self, from: url(sessionID)) }
+    /// Whether the session's recap was saved to Aya. Reads only that field, so listing stays cheap.
+    public static func savedToAya(_ sessionID: String) -> Bool {
+        struct Probe: Decodable { var recapRecordID: String? }
+        return (try? JSONIO.read(Probe.self, from: url(sessionID)))?.recapRecordID != nil
+    }
     public func save(_ sessionID: String) throws { try JSONIO.write(self, to: AssistRecord.url(sessionID)) }
 }
 

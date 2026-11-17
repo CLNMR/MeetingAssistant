@@ -307,7 +307,7 @@ The user's vocabulary (`vocabulary.json`, see Vocabulary section) is applied to 
 | `recorded` | audio saved, no current transcription job | dashed circle |
 | `queued` | waiting in the queue | clock |
 | `transcribing` | pipeline running | waveform (accent colour) |
-| `done` | `transcript.json` written | green check |
+| `done` | `transcript.json` written | green check; for an Assist session whose recap was saved to Aya (`assist.json` has `recapRecordID`): cloud-upload icon in the accent colour, tooltip "Transcribed and saved to Aya" |
 | `failed` | last pipeline run threw | amber warning |
 
 - One serial FIFO queue; a session is never queued twice. Enqueue sets `queued`; the worker sets `transcribing`, shows progress (list row progress bar + detail view), then `done` (plays a short "Glass" sound and requests user attention if the app is in the background) or `failed` (alert "Transcription failed: …").

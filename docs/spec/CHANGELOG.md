@@ -10,6 +10,14 @@ What changed for the user, in one to three sentences.
 Sections: 01-recording (Live transcription), 03-assist-ui (Review)
 ```
 
+## 2026-11-17: Global shortcut to start or stop a meeting
+New setting *Start or stop a meeting* in Settings › General, default ⌃⌥⌘R, works in any app. It stops the running recording, or starts a meeting (Assist when Assist is open and ready, otherwise a Scribe recording), and always brings MeetingAssistant to the front.
+Sections: 04-dictation-settings (3.4 Global hotkeys: meeting shortcut, 6.1 General)
+
+## 2026-11-17: Meeting list shows which meetings are saved to Aya
+A transcribed meeting whose recap was saved to Aya now shows a cloud-upload badge in the accent colour ("Transcribed and saved to Aya") instead of the green check, which now means "transcribed only". The badge appears in both the Assist meetings list and the Recordings list, and right after saving.
+Sections: 01-recording (Transcription queue and session statuses), 03-assist-ui (Meetings list: Session row, Mac implementation)
+
 ## 2026-11-17: "Open in Aya" links work again
 Links to Aya used `…/recordlist/<record type>/record/<id>`, but the web app's `recordlist` pages are named after navigation entries, not record types, so links broke (e.g. type `pmMeetings`, page `meetings`). Links now use the web app's record-type routes: `/workspace/<ws>/record/<type>/<id>` and `/workspace/<ws>/list/<type>/`.
 Sections: 02-assist-core (Web URLs), 03-assist-ui (Rail logo, Open in Aya)

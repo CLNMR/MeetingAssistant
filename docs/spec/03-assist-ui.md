@@ -436,7 +436,7 @@ A confirmation dialog titled "Delete “<title>”?" with the message "The recor
 - **New Meeting** row: a teal 26 px circle with a plus and the text "New Meeting". It is highlighted (`muted` fill) while in Prepare. Clicking it finishes the review and returns to Prepare.
 - **Search** field (magnifier). Filters by title, case-insensitive contains.
 - **List**: all sessions that have an Assist record, excluding the one currently recording. Order follows the global session order (newest first).
-  - **Session row**: the title (semibold when selected), a status badge (done ✓ success, failed ⚠ warning, queued clock, transcribing waveform in primary, recording red dot, recorded dashed circle), a mode icon (call phone, in-person three people, hybrid), the date "12 Nov, 14:05" and " · clock(duration)", and a progress bar while transcribing.
+  - **Session row**: the title (semibold when selected), a status badge (done ✓ success, tooltip "Transcribed"; done and saved to Aya — the session's `assist.json` has a `recapRecordID` — a cloud-upload icon in primary, tooltip "Transcribed and saved to Aya"; failed ⚠ warning, queued clock, transcribing waveform in primary, recording red dot, recorded dashed circle), a mode icon (call phone, in-person three people, hybrid), the date "12 Nov, 14:05" and " · clock(duration)", and a progress bar while transcribing.
   - Selected row (the one under review): primary 10 % fill. Hover: `hover` 60 %.
   - Clicking a row opens its review (ignored if it is already open).
   - **Context menu**: "Show Transcript" (switches to Scribe with this session), "Show in Finder", a divider, then "Delete…" (destructive, disabled while busy; opens the confirmation in §8.7).
@@ -465,7 +465,7 @@ Footer: the StepLine ("Importing…" or the error), **Cancel** (secondary, Esc) 
 5. Save an Assist record with an empty live state, apart from the template checklist and tables.
 6. Reload the sessions, queue the session for transcription and open its Review, which waits for the transcript and then drafts.
 
-*Mac implementation:* `AssistMeetingsPanel`, `ImportMeetingSheet` in `AssistPeopleViews.swift`; `SessionRow`, `StatusBadge`, `modeIcon` in `ContentView.swift`; `importMeeting` in `AssistMeetings.swift`. Assist sessions are the ones with an `assist.json` (`AppState.assistSessionIDs`).
+*Mac implementation:* `AssistMeetingsPanel`, `ImportMeetingSheet` in `AssistPeopleViews.swift`; `SessionRow`, `StatusBadge`, `modeIcon` in `ContentView.swift`; `importMeeting` in `AssistMeetings.swift`. Assist sessions are the ones with an `assist.json` (`AppState.assistSessionIDs`); the saved ones are `AppState.savedToAyaIDs`, read on every reload with `AssistRecord.savedToAya` (decodes only `recapRecordID`) and updated right after a save. SF Symbol `icloud.and.arrow.up.fill`.
 
 *Windows notes:* "Show in Finder" becomes "Show in Explorer" (`explorer.exe /select,"<path>"`). Use `FileOpenPicker` with audio/video file types and `PickMultipleFilesAsync`.
 

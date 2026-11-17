@@ -31,6 +31,13 @@ struct GeneralSettings: View {
             LabeledContent("Default meeting type") {
                 AyaSelect(selection: $state.prefs.defaultMode, options: MeetingMode.allCases.map { ($0, $0.title) }).frame(maxWidth: 240)
             }
+            LabeledContent("Start or stop a meeting") {
+                ShortcutRecorder(hotKey: $state.prefs.meetingHotKey,
+                                 onRecordingChange: { state.suspendDictationShortcut($0) })
+            }
+            if let e = state.meetingHotKeyError { Text(e).font(.caption).foregroundStyle(.red) }
+            Text("Works in any app. Starts a meeting when none is running (in Assist when Assist is open and ready, otherwise a Scribe recording) and stops the running one. MeetingAssistant comes to the front either way.")
+                .font(.caption).foregroundStyle(.secondary)
             Toggle("Show live transcript while recording", isOn: $state.prefs.liveTranscription)
             Toggle("Create full transcript automatically after recording", isOn: $state.prefs.autoTranscribe)
             Toggle("Hide the floating transcript and the dictation overlay from screen sharing", isOn: $state.prefs.hideFromScreenSharing)

@@ -625,6 +625,7 @@ final class AssistController: ObservableObject {
             rec.recapUploadedAt = Date()
             try? rec.save(id)
             record = rec
+            app.savedToAyaIDs.insert(id)
             // The sidebar shows the title the meeting has in Aya.
             nameSession(id, written ?? targetRecord?.title, automatic: rec.context.title, force: true)
             recapState = .done("Saved in Aya: “\(targetRecord?.title ?? "meeting")” (\(ref.label)).")

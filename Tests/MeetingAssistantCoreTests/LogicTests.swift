@@ -373,5 +373,6 @@ private func writeSilence(_ url: URL, seconds: Int, rate: Double = 8000) throws 
         #expect(abs(r2.lines[0].start - 10) < 0.01)
         #expect(r2.context.clientTitle == "MUSTER SOLAR")
         #expect(r2.recapRecordID == nil && r2.recapUploadedAt == nil && r2.recapDraft == nil)
+        #expect(AssistRecord.savedToAya(id) && !AssistRecord.savedToAya(second.id))
     }
 }

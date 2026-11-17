@@ -316,7 +316,14 @@ Data model (persisted in preferences as JSON):
 - Display names: modifier-only single keys `Left ⌃ Control`, `Right ⌃ Control`, `Left ⇧ Shift`, `Right ⇧ Shift`, `Left ⌘ Command`, `Right ⌘ Command`, `Left ⌥ Option`, `Right ⌥ Option`, `fn / 🌐`; multi-key joined with ` + ` using short names (`Right ⌥ + Right ⌘`). Combos: `⌃⌥⇧⌘` prefix order + key name (Space, ↩, ⇥, ⌫, ⌦, ⎋, arrows, ↖ ↘ ⇞ ⇟, F1–F20, else the character from the current keyboard layout, uppercased).
 - Taps shorter than 0.3 s are ignored (1.4 step 3).
 
-**Mac implementation:** `HotKey`, `GlobalHotKey` (Carbon `RegisterEventHotKey` signature `'MSCT'` for combos; `NSEvent` global+local monitors for `.flagsChanged`/`.keyDown` with device-dependent masks for modifier-only), `ShortcutRecorder` in `Sources/MeetingAssistant/HotKey.swift`; registration in `AppState.applyDictationShortcut()`.
+**Meeting shortcut** (`meetingHotKey`, default **⌃⌥⌘R**, key combination; `null` = none). A third hotkey object, independent of dictation (registered even when dictation is off), set in Settings › General (6.1). Only the press is used. On press:
+1. Bring the app to the front: activate it and show the main window (un-minimize it; reopen it if it was closed).
+2. If a recording is running (Scribe or Assist), stop it, exactly like *Stop Recording* (an Assist meeting then goes to its Review).
+3. Otherwise, if the app is in Assist mode: a Review that is open is closed (as *Done*, the draft is kept); if Assist can start (Aya connected, Claude ready, nothing loading), start the Assist meeting as the *Start* button does, with whatever is selected in the prepare form (possibly nothing).
+4. Otherwise switch to Scribe, select the recorder and start a recording with the recorder's current meeting type.
+It is re-registered when it changes and suspended while any shortcut is being recorded in Settings. A registration failure shows the usual `… is already used by another app …` error under it.
+
+**Mac implementation:** `HotKey`, `GlobalHotKey` (Carbon `RegisterEventHotKey` signature `'MSCT'` for combos; `NSEvent` global+local monitors for `.flagsChanged`/`.keyDown` with device-dependent masks for modifier-only), `ShortcutRecorder` in `Sources/MeetingAssistant/HotKey.swift`; registration in `AppState.applyDictationShortcut()`; the meeting shortcut in `AppState.applyMeetingShortcut()` / `meetingShortcutPressed()` / `bringToFront()` (`HotKey.meetingDefault`; a closed main window is reopened through `openWindow` captured by the menu-bar label view `MenuBarLabel`).
 **Windows notes:**
 - `RegisterHotKey` only reports key-*down* (`WM_HOTKEY`), which is not enough for push-to-talk. Use a **low-level keyboard hook** (`SetWindowsHookEx(WH_KEYBOARD_LL)`) for both kinds: it distinguishes `VK_LCONTROL/VK_RCONTROL`, `VK_LMENU/VK_RMENU`, `VK_LSHIFT/VK_RSHIFT`, `VK_LWIN/VK_RWIN` and sees key-up. Optionally use `RegisterHotKey` only to detect conflicts for combos. The hook callback must return within ~300 ms (`LowLevelHooksTimeout`), so only post messages from it.
 - Persist Windows virtual-key codes (store a `platform` field or separate keys) — Mac key codes do not map 1:1.
@@ -453,6 +460,7 @@ Storage: app preferences as one JSON blob under key `preferences.v1` in the app'
 | Control | Pref key | Default | Notes |
 |---|---|---|---|
 | *Open MeetingAssistant at login* | – (system login items) | off until answered (3.5) | Reads and writes the operating system's login-item registration, not the preferences blob, so a change in the system's login-item settings shows here. If the system needs the user's approval, the toggle shows on with caption `Allow MeetingAssistant in System Settings › General › Login Items.` and button *Open Login Items*. A failure shows in red: `Could not turn on opening at login: <reason>`. Disabled when the app does not run from an installed app bundle. |
+| *Start or stop a meeting* (shortcut recorder, 3.4) | `meetingHotKey` | ⌃⌥⌘R | Caption `Works in any app. Starts a meeting when none is running (in Assist when Assist is open and ready, otherwise a Scribe recording) and stops the running one. MeetingAssistant comes to the front either way.` Registration error in red under it. Windows: Ctrl+Alt+Win+R. |
 | *Your name* (text, placeholder `Me`) | `myName` | `Me` | Label for the user's speaker; empty → `Me` |
 | *Default meeting type* | `defaultMode` | `call` | `call` (Call), `inPerson` (In person), `hybrid` (Hybrid) |
 | *Show live transcript while recording* | `liveTranscription` | on | |

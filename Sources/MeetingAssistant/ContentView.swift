@@ -157,7 +157,8 @@ struct RecordingsPanel: View {
                 ScrollView {
                     LazyVStack(spacing: 2) {
                         ForEach(items) { s in
-                            SessionRow(info: s, progress: state.progress[s.id], selected: state.selection == .session(s.id))
+                            SessionRow(info: s, progress: state.progress[s.id], selected: state.selection == .session(s.id),
+                                       savedToAya: state.savedToAyaIDs.contains(s.id))
                                 .id(s.id)
                                 .onTapGesture { state.selection = .session(s.id); listFocused = true }
                                 .contextMenu {
@@ -235,6 +236,7 @@ struct SessionRow: View {
     let info: SessionInfo
     let progress: JobProgress?
     var selected = false
+    var savedToAya = false
     @State private var hovering = false
 
     var body: some View {
@@ -242,7 +244,7 @@ struct SessionRow: View {
             HStack(spacing: 6) {
                 Text(info.title).font(.system(size: 13, weight: selected ? .semibold : .medium)).lineLimit(1)
                 Spacer(minLength: 4)
-                StatusBadge(status: info.status)
+                StatusBadge(status: info.status, savedToAya: savedToAya)
             }
             HStack(spacing: 5) {
                 Image(systemName: modeIcon(info.mode)).font(.system(size: 9))
@@ -273,9 +275,14 @@ func modeIcon(_ m: MeetingMode) -> String {
 
 struct StatusBadge: View {
     let status: SessionInfo.Status
+    var savedToAya = false
     var body: some View {
         switch status {
+        case .done where savedToAya:
+            Image(systemName: "icloud.and.arrow.up.fill").foregroundStyle(Aya.primary).font(.system(size: 11))
+                .help("Transcribed and saved to Aya")
         case .done: Image(systemName: "checkmark.circle.fill").foregroundStyle(Aya.success).font(.system(size: 11))
+                .help("Transcribed")
         case .failed: Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Aya.warning).font(.system(size: 11))
         case .queued: Image(systemName: "clock").foregroundStyle(Aya.textSubtle).font(.system(size: 11))
         case .transcribing: Image(systemName: "waveform").foregroundStyle(Aya.primary).font(.system(size: 11))

@@ -28,6 +28,8 @@ struct Preferences: Codable, Equatable {
     var muteWhileDictating = true
     /// Keep the floating live transcript and the dictation HUD out of screen sharing and screenshots.
     var hideFromScreenSharing = true
+    /// Global shortcut that starts a meeting, or stops the running one, and brings the app to the front.
+    var meetingHotKey: HotKey? = .meetingDefault
 
     init() {}
 
@@ -35,7 +37,7 @@ struct Preferences: Codable, Equatable {
         case engine, language, myName, inputDeviceUID, liveTranscription, autoTranscribe, defaultMode
         case dictationEnabled, dictationHotKey
         case scribePlusHotKey, scribePlusContext, scribePlusWarm, scribePlusModel, fitToCursor, muteWhileDictating
-        case hideFromScreenSharing
+        case hideFromScreenSharing, meetingHotKey
     }
 
     // Missing keys fall back to defaults so new settings never reset the old ones.
@@ -58,6 +60,7 @@ struct Preferences: Codable, Equatable {
         fitToCursor = (try? c.decodeIfPresent(Bool.self, forKey: .fitToCursor)) ?? d.fitToCursor
         muteWhileDictating = (try? c.decodeIfPresent(Bool.self, forKey: .muteWhileDictating)) ?? d.muteWhileDictating
         hideFromScreenSharing = (try? c.decodeIfPresent(Bool.self, forKey: .hideFromScreenSharing)) ?? d.hideFromScreenSharing
+        meetingHotKey = c.contains(.meetingHotKey) ? (try? c.decodeIfPresent(HotKey.self, forKey: .meetingHotKey)) : d.meetingHotKey
     }
 
     func encode(to encoder: Encoder) throws {
@@ -78,6 +81,7 @@ struct Preferences: Codable, Equatable {
         try c.encode(fitToCursor, forKey: .fitToCursor)
         try c.encode(muteWhileDictating, forKey: .muteWhileDictating)
         try c.encode(hideFromScreenSharing, forKey: .hideFromScreenSharing)
+        try c.encode(meetingHotKey, forKey: .meetingHotKey)   // explicit null = "no shortcut"
     }
 
     static let key = "preferences.v1"
@@ -118,6 +122,7 @@ final class AppState: ObservableObject {
                 || prefs.scribePlusModel != oldValue.scribePlusModel {
                 applyDictationShortcut()
             }
+            if prefs.meetingHotKey != oldValue.meetingHotKey { applyMeetingShortcut() }
             if prefs.hideFromScreenSharing != oldValue.hideFromScreenSharing {
                 ScreenSharePrivacy.apply(prefs.hideFromScreenSharing)
             }
@@ -126,6 +131,8 @@ final class AppState: ObservableObject {
     @Published var sessions: [SessionInfo] = []
     /// Sessions recorded or imported in Assist mode (they have an assist.json).
     @Published var assistSessionIDs: Set<String> = []
+    /// Assist sessions whose recap was saved to an Aya meeting (their assist.json has a recapRecordID).
+    @Published var savedToAyaIDs: Set<String> = []
     @Published var appMode = AppMode(rawValue: UserDefaults.standard.string(forKey: "appMode") ?? "") ?? .scribe {
         didSet { UserDefaults.standard.set(appMode.rawValue, forKey: "appMode") }
     }
@@ -155,6 +162,8 @@ final class AppState: ObservableObject {
     private let hotKey = GlobalHotKey()
     private let plusHotKey = GlobalHotKey()
     @Published var hotKeyError: String?
+    private let meetingHotKey = GlobalHotKey()
+    @Published var meetingHotKeyError: String?
     @Published var vocabulary = Vocabulary.load() {
         didSet { if vocabulary != oldValue { vocabulary.save(); dictation.vocabulary = vocabulary } }
     }
@@ -230,6 +239,7 @@ final class AppState: ObservableObject {
     func reload() {
         sessions = SessionStore.list()
         assistSessionIDs = Set(sessions.map(\.id).filter { FileManager.default.fileExists(atPath: AssistRecord.url($0).path) })
+        savedToAyaIDs = Set(assistSessionIDs.filter { AssistRecord.savedToAya($0) })
     }
     func refreshDevices() { inputDevices = AudioDevices.inputDevices() }
 
@@ -256,6 +266,8 @@ final class AppState: ObservableObject {
         plusHotKey.onRelease = { [weak self] in self?.dictation.end() }
         plusHotKey.onCancel = { [weak self] in self?.dictation.cancel() }
         applyDictationShortcut()
+        meetingHotKey.onPress = { [weak self] in Task { await self?.meetingShortcutPressed() } }
+        applyMeetingShortcut()
         // A lone modifier key is only visible to the app once Accessibility is granted.
         dictation.watchTrust { [weak self] in self?.applyDictationShortcut() }
         if prefs.dictationEnabled, modelsReady {
@@ -272,8 +284,43 @@ final class AppState: ObservableObject {
 
     /// Pause the global shortcuts while the user records a new one in Settings.
     func suspendDictationShortcut(_ suspend: Bool) {
-        if suspend { hotKey.unregister(); plusHotKey.unregister() } else { applyDictationShortcut() }
+        if suspend { hotKey.unregister(); plusHotKey.unregister(); meetingHotKey.unregister() }
+        else { applyDictationShortcut(); applyMeetingShortcut() }
     }
+
+    func applyMeetingShortcut() {
+        meetingHotKey.register(prefs.meetingHotKey)
+        meetingHotKeyError = meetingHotKey.registrationError
+    }
+
+    /// The meeting shortcut: stop the running recording, or start a meeting — in Assist when Assist
+    /// is the current mode and ready, otherwise a Scribe recording. The app always comes to the front.
+    func meetingShortcutPressed() async {
+        bringToFront()
+        if isRecording { await stopRecording(); return }
+        if appMode == .assist {
+            if case .review = assist.phase { assist.finishReview() }
+            if assist.canStart { await assist.start(); return }
+        }
+        appMode = .scribe
+        selection = .recorder
+        await startRecording()
+    }
+
+    /// Activates the app and shows its main window (or opens it again if it was closed).
+    func bringToFront() {
+        NSApp.activate(ignoringOtherApps: true)
+        let main = NSApp.windows.first { $0.identifier?.rawValue.hasPrefix("main") == true }
+            ?? NSApp.windows.first { !($0 is NSPanel) && $0.canBecomeMain }
+        if let main {
+            if main.isMiniaturized { main.deminiaturize(nil) }
+            main.makeKeyAndOrderFront(nil)
+        } else {
+            reopenMainWindow?()
+        }
+    }
+    /// Set by the menu bar content, which has SwiftUI's openWindow action.
+    var reopenMainWindow: (() -> Void)?
 
     // MARK: - Recording
 

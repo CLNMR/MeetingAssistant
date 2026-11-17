@@ -13,6 +13,9 @@ struct HotKey: Codable, Equatable {
 
     static let rightOption = HotKey(keyCode: UInt16(kVK_RightOption), modifiers: 0, modifierOnly: true)
     static let rightOptionCommand = HotKey.modifiers([UInt16(kVK_RightOption), UInt16(kVK_RightCommand)])
+    /// ⌃⌥⌘R: start or stop a meeting.
+    static let meetingDefault = HotKey(keyCode: UInt16(kVK_ANSI_R),
+                                       modifiers: NSEvent.ModifierFlags([.control, .option, .command]).rawValue, modifierOnly: false)
 
     static let allModifierKeys: [UInt16] = [kVK_Function, kVK_Control, kVK_RightControl, kVK_Option, kVK_RightOption,
                                             kVK_Shift, kVK_RightShift, kVK_Command, kVK_RightCommand].map { UInt16($0) }
