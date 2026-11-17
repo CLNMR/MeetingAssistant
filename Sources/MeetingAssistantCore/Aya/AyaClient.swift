@@ -57,6 +57,20 @@ public struct AyaRecord: Codable, Identifiable, Hashable, Sendable {
     }
 }
 
+/// Links into the Aya web app (app.hey-aya.ai).
+public enum AyaWebLink {
+    /// `/workspace/<ws>/record/<type>/<id>` for a record, `/workspace/<ws>/list/<type>/` for the list.
+    public static func url(workspace: String, recordType: String, record id: String? = nil) -> URL? {
+        func enc(_ s: String) -> String? {
+            let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+            return t.isEmpty ? nil : t.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-_.~")))
+        }
+        guard let ws = enc(workspace), let type = enc(recordType) else { return nil }
+        if let id, let r = enc(id) { return URL(string: "https://app.hey-aya.ai/workspace/\(ws)/record/\(type)/\(r)") }
+        return URL(string: "https://app.hey-aya.ai/workspace/\(ws)/list/\(type)/")
+    }
+}
+
 public enum AyaText {
     /// The label in the system language, then English, then any.
     public static func localized(_ map: [String: String]?) -> String? {

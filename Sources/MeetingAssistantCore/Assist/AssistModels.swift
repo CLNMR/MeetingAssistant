@@ -10,6 +10,8 @@ public struct PlaybookItem: Codable, Hashable, Identifiable, Sendable {
     public var text: String
     public var status: Status = .missing
     public var evidence: String?
+    /// For a fill-in item ("Budget:", "Win: % / Pain: %"): what was said, in a few words.
+    public var answer: String?
     public init(id: String, section: String, text: String) { self.id = id; self.section = section; self.text = text }
 }
 
@@ -263,8 +265,10 @@ public enum AssistOp: Equatable, Sendable {
     case summaryAppend([String])
     case summaryReplace(index: Int, text: String)
     case openPoint(AssistState.OpenPoint)
+    /// Combines points about the same issue: `into` gets `text`, the others are removed.
+    case openPointMerge(ids: [String], into: String, text: String)
     case attendee(AssistState.Attendee)
-    case playbook(item: String, status: PlaybookItem.Status, evidence: String?)
+    case playbook(item: String, status: PlaybookItem.Status, evidence: String?, answer: String? = nil)
     case tableCell(row: String, column: String, value: String, evidence: String?)
 
     /// Parses one output line. Returns nil for anything that isn't a valid op (prose, fences, partial JSON).
@@ -296,13 +300,17 @@ public enum AssistOp: Equatable, Sendable {
             guard let id = str("id"), let text = str("text") else { return nil }
             return .openPoint(.init(id: id, text: text, raisedBy: str("raised_by"),
                                     status: AssistState.OpenPoint.Status(rawValue: str("status") ?? "open") ?? .open))
+        case "open_point_merge":
+            let ids = (v["ids"]?.array ?? []).compactMap { $0.string?.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            guard let into = str("into"), let text = str("text"), !ids.isEmpty else { return nil }
+            return .openPointMerge(ids: ids, into: into, text: text)
         case "attendee":
             guard let name = str("name") else { return nil }
             return .attendee(.init(name: name, role: str("role"), company: str("company"), notes: str("notes"),
                                    speaker: str("speaker"), contactID: str("contact_id"), present: v["present"]?.bool))
         case "playbook":
             guard let item = str("item"), let st = PlaybookItem.Status(rawValue: str("status") ?? "") else { return nil }
-            return .playbook(item: item, status: st, evidence: str("evidence"))
+            return .playbook(item: item, status: st, evidence: str("evidence"), answer: str("answer"))
         case "table_cell":
             let value = v["value"].map { j -> String in
                 if let b = j.bool { return b ? yesNo.yes : yesNo.no }
@@ -341,6 +349,22 @@ extension AssistState {
                 openPoints[i] = n
             } else { openPoints.append(p) }
             return ["o:\(p.id)"]
+        case .openPointMerge(let ids, let into, let text):
+            let merged = openPoints.filter { ids.contains($0.id) && $0.id != into }
+            let target = openPoints.first { $0.id == into }
+            guard target != nil || !merged.isEmpty else { return [] }
+            // The combined point stays open while any part of it is open.
+            let parts = (target.map { [$0] } ?? []) + merged
+            let status: AssistState.OpenPoint.Status = parts.contains { $0.status == .open } ? .open
+                : parts.allSatisfy { $0.status == .answered } ? .answered : .parked
+            let point = AssistState.OpenPoint(id: into, text: text, raisedBy: target?.raisedBy ?? merged.first?.raisedBy, status: status)
+            if let i = openPoints.firstIndex(where: { $0.id == into }) {
+                openPoints[i] = point
+            } else if let i = openPoints.firstIndex(where: { $0.id == merged.first?.id }) {
+                openPoints[i] = point   // a new id takes the place of the first merged point
+            }
+            openPoints.removeAll { ids.contains($0.id) && $0.id != into }
+            return ["o:\(into)"]
         case .attendee(let a):
             if let i = attendees.firstIndex(where: { $0.id == a.id || ($0.speaker != nil && $0.speaker == a.speaker && a.speaker != nil && $0.contactID == nil) }) {
                 var m = attendees[i]
@@ -351,10 +375,11 @@ extension AssistState {
                 attendees[i] = m
             } else { attendees.append(a) }
             return ["a:\(a.id)"]
-        case .playbook(let item, let status, let evidence):
+        case .playbook(let item, let status, let evidence, let answer):
             guard let i = playbook.firstIndex(where: { $0.id == item }) else { return [] }
             playbook[i].status = status
             if let evidence { playbook[i].evidence = evidence }
+            if let answer { playbook[i].answer = answer }
             return ["p:\(item)"]
         case .tableCell(let row, let column, let value, let evidence):
             let tid = String(row.split(separator: ".").first ?? "")

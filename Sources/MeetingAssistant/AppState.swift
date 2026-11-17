@@ -151,6 +151,7 @@ final class AppState: ObservableObject {
 
     // Push-to-talk dictation
     let dictation = DictationController()
+    let launchAtLogin = LaunchAtLogin()
     private let hotKey = GlobalHotKey()
     private let plusHotKey = GlobalHotKey()
     @Published var hotKeyError: String?

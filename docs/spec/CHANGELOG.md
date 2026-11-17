@@ -10,6 +10,34 @@ What changed for the user, in one to three sentences.
 Sections: 01-recording (Live transcription), 03-assist-ui (Review)
 ```
 
+## 2026-11-17: "Open in Aya" links work again
+Links to Aya used `…/recordlist/<record type>/record/<id>`, but the web app's `recordlist` pages are named after navigation entries, not record types, so links broke (e.g. type `pmMeetings`, page `meetings`). Links now use the web app's record-type routes: `/workspace/<ws>/record/<type>/<id>` and `/workspace/<ws>/list/<type>/`.
+Sections: 02-assist-core (Web URLs), 03-assist-ui (Rail logo, Open in Aya)
+
+## 2026-11-17: Checklist items are filled in; escaped templates load
+Fill-in checklist items (text ending in ":" or with "%" blanks, e.g. "Erika: Win: % / Pain: %") now get a short answer from Claude (a few words, no sentences). It shows under the item in the Checklist panel, goes to the recap draft as CHECKLIST ANSWERS, and is saved with the template tables under the template heading. Templates whose Markdown comes escaped from Aya (`\- Name:&#x20;`) now produce their checklist instead of none.
+Sections: 02-assist-core (3.1 live system prompt, 3.4 resume message, 3.6 ops, 4.2 PlaybookItem, 6.1 parser unescaping, 6.3 block and checklistLine, 7.3 recap context, 7.5 saving the recap), 03-assist-ui (Checklist panel)
+
+## 2026-11-17: Meetings in the sidebar carry their Aya title
+Assist meetings in the sidebar are named after the title written to Aya instead of "Meeting": after saving to Aya (always), after a recap draft (only while the name is still automatic), and once at app start for meetings already saved to Aya.
+Sections: 03-assist-ui (8.2 Upload: Session name = Aya title, Mac implementation)
+
+## 2026-11-16: Fewer, shorter open points
+Open points are now kept like the summary: one short line per issue (about 12 words, starting with a topic label), at most about 6 open. Every tick shows Claude the current open points, so it rewrites an existing point instead of adding a new one, and it can combine points about the same issue with the new op `open_point_merge`.
+Sections: 02-assist-core (3.1 live system prompt, 3.5 tick message, 3.6 ops and applying ops)
+
+## 2026-11-16: Floating window shows the speaker names given in Assist
+Speakers named during an Assist meeting (rename, or matched to an attendee) now carry that name in the floating live transcript too, instead of "Speaker n" / "Remote n". The names stay on the recording's lines after it ends.
+Sections: 01-recording (Floating live transcript window: Paragraphs), 03-assist-ui (Live rename)
+
+## 2026-11-16: "What did I miss?" answers in the meeting's language
+The catch-up summary came back in English in German meetings. The prompt now names the language detected in the transcript window (`LANGUAGE: German`, ending with `Answer in German.`), and the system prompt asks for the whole answer in that language, including the "Now:" label ("Jetzt:").
+Sections: 02-assist-core (3.7 catchUpSystem, 3.8 catch-up prompt and language detection)
+
+## 2026-11-13: Open at login
+A new General setting, *Open MeetingAssistant at login*, registers the app as a login item. The first time the main window opens, an alert asks whether to turn it on (*Open at Login* / *Not Now*); it is asked only once.
+Sections: 04-dictation-settings (3.5 Permissions and onboarding, 6.1 General)
+
 ## 2026-11-11: Markdown editor for the recap fields
 Markdown fields of the recap (and Markdown CRM changes) now show the formatted text: headings, lists, checklists, quotes, code, tables and inline styles. Clicking switches to an editor with a formatting bar (heading, bold, italic, strikethrough, code, lists, checklist, quote), shortcuts, list continuation on Return, Tab/Shift-Tab nesting and live highlighting; Done or Esc returns to the formatted view. The editor grows to 420 px.
 Sections: 03-assist-ui (8.2 Meeting recap: Markdown field, Mac implementation; 13 snapshot renderer; Windows implementation)

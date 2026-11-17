@@ -55,7 +55,24 @@ final class AssistController: ObservableObject {
 
     // Meeting
     @Published var phase: Phase = .prepare
-    @Published var state = AssistState()
+    @Published var state = AssistState() {
+        didSet {
+            // Names given during the meeting also label the recording in the floating window.
+            guard phase == .running, app.isRecording,
+                  state.speakerNames != oldValue.speakerNames || state.attendees != oldValue.attendees else { return }
+            app.listen.setRecordingNames(liveNamesForFloatingWindow)
+        }
+    }
+
+    /// Raw live label → name, for the speakers the user (or Claude via an attendee) has named.
+    var liveNamesForFloatingWindow: [String: String] {
+        var out: [String: String] = [:]
+        for (raw, n) in state.speakerNames ?? [:] {
+            let name = SpeakerNames.resolved(n, attendees: state.attendees)
+            if !SpeakerNames.isGeneric(name) { out[raw] = name }
+        }
+        return out
+    }
     @Published var status: AssistStatus = .idle
     @Published var paused = false
     @Published var startState: StepState = .idle
@@ -94,6 +111,7 @@ final class AssistController: ObservableObject {
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.flushDraft() }
         }
+        nameSavedMeetings()
         guard !config.orgId.isEmpty, hasAPIKey else { return }
         if !config.isComplete || templates.isEmpty {
             // First start after meeting templates were introduced: pick the new lists.
@@ -126,13 +144,12 @@ final class AssistController: ObservableObject {
     }
     var service: AyaService? { AyaService(config: config) }
 
-    /// A list in the Aya web app (app.hey-aya.ai/workspace/<ws>/recordlist/<list>), or one record in it.
+    /// A record type's list in the Aya web app, or one record of it. The web app addresses both by the
+    /// record type (`/list/<type>/`, `/record/<type>/<id>`); its `recordlist/<name>` pages use the name of
+    /// a navigation entry, which the API does not report and which often differs from the type's name.
     func ayaURL(_ slot: AyaSlot, record id: String? = nil) -> URL? {
-        guard let ref = config.list(slot), let ws = ref.workspaceId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
-              let list = ref.techName.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else { return nil }
-        var s = "https://app.hey-aya.ai/workspace/\(ws)/recordlist/\(list)"
-        if let id, !id.isEmpty, let r = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) { s += "/record/\(r)" }
-        return URL(string: s)
+        guard let ref = config.list(slot) else { return nil }
+        return AyaWebLink.url(workspace: ref.workspaceId, recordType: ref.techName, record: id)
     }
 
     /// Where the logo leads: the workspace with the meetings, else the organization.
@@ -509,6 +526,23 @@ final class AssistController: ObservableObject {
         }
     }
 
+    /// Names a session after its meeting's title. Without `force` only a session that still has its
+    /// automatic name ("Meeting" or the name it got at the start) is renamed, so a name the user typed stays.
+    func nameSession(_ id: String, _ title: String?, automatic: String, force: Bool) {
+        guard let t = title.map(RecapBuilder.sessionTitle), !t.isEmpty,
+              let s = app.sessions.first(where: { $0.id == id }), s.title != t,
+              force || s.title == "Meeting" || s.title == automatic else { return }
+        app.rename(id, to: t)
+    }
+
+    /// Meetings saved to Aya before sessions were named after their title get that name once.
+    private func nameSavedMeetings() {
+        for id in app.assistSessionIDs {
+            guard let rec = AssistRecord.load(id), rec.recapRecordID != nil, let draft = rec.recapDraft else { continue }
+            nameSession(id, RecapBuilder.title(draft, config: config), automatic: rec.context.title, force: false)
+        }
+    }
+
     var reviewSessionID: String? { if case .review(let id) = phase { return id }; return nil }
 
     func draftRecap() async {
@@ -521,6 +555,7 @@ final class AssistController: ObservableObject {
             if targetMeetingID != nil, targetRecord == nil { await loadTargetRecord() }
             recapFields = try await RecapBuilder.draftRecap(binary: b, model: settings.model, record: rec, sessionID: id, schema: schema,
                                                             config: config, existing: targetRecord)
+            nameSession(id, RecapBuilder.title(recapFields, config: config), automatic: rec.context.title, force: false)
             recapState = .idle
         } catch {
             recapState = .failed(error.localizedDescription)
@@ -569,16 +604,19 @@ final class AssistController: ObservableObject {
         let people = [rec.context.myName] + rec.state.attendees.filter { $0.present != false }.map(\.name)
         let memberIDs = RecapBuilder.memberIDs(attendees: people, members: members)
         recapState = .working("Saving in Aya…")
+        var written: String?
         do {
             if let target = targetMeetingID {
                 let current = try await svc.record(.meetings, id: target)
                 let values = RecapBuilder.recapValues(recapFields, record: rec, sessionID: id, startedAt: started, schema: schema,
                                                       config: config, existing: current, memberIDs: memberIDs, tables: reviewTables)
+                written = values[config.meetingTitleField]?.string
                 targetRecord = try await svc.client.update(workspace: ref.workspaceId, list: ref.techName, id: target, values: values)
                 rec.recapRecordID = target
             } else {
                 let values = RecapBuilder.recapValues(recapFields, record: rec, sessionID: id, startedAt: started, schema: schema,
                                                       config: config, memberIDs: memberIDs, tables: reviewTables)
+                written = values[config.meetingTitleField]?.string
                 let created = try await svc.client.create(workspace: ref.workspaceId, list: ref.techName, values: values)
                 rec.recapRecordID = created.id
                 targetMeetingID = created.id
@@ -587,6 +625,8 @@ final class AssistController: ObservableObject {
             rec.recapUploadedAt = Date()
             try? rec.save(id)
             record = rec
+            // The sidebar shows the title the meeting has in Aya.
+            nameSession(id, written ?? targetRecord?.title, automatic: rec.context.title, force: true)
             recapState = .done("Saved in Aya: “\(targetRecord?.title ?? "meeting")” (\(ref.label)).")
         } catch {
             recapState = .failed(error.localizedDescription)

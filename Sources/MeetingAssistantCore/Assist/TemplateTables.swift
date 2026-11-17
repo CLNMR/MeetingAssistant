@@ -159,7 +159,7 @@ public enum TemplateParser {
 
         var lead: String?                  // "Pro genutztem Modul:" — prefixes the items below it
         for raw in markdown.components(separatedBy: .newlines) {
-            let line = raw.trimmingCharacters(in: .whitespaces)
+            let line = unescape(raw).trimmingCharacters(in: .whitespaces)
             if line.hasPrefix("|") { tableLines.append(line); lead = nil; continue }
             if !tableLines.isEmpty { flushTable() }
             if line.isEmpty { continue }
@@ -186,6 +186,45 @@ public enum TemplateParser {
         flushTable()
         flushParagraph()
         out.items = dropOverview(out.items)
+        return out
+    }
+
+    /// "**Budget:** 50k, Freigabe GF" for a fill-in item ("Erika: Win: % / Pain: %" keeps only "Erika:"
+    /// because the answer repeats the blanks' labels), "Ziel geklärt: ja" otherwise.
+    public static func checklistLine(_ item: PlaybookItem) -> String {
+        let text = item.text.trimmingCharacters(in: .whitespaces)
+        let answer = (item.answer ?? "").replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
+        guard text.hasSuffix(":") || text.contains("%") else { return "\(text): \(answer)" }
+        let label = text.firstIndex(of: ":").map { String(text[...$0]) } ?? text
+        return "**\(label)** \(answer)"
+    }
+
+    /// Undoes the escaping some editors export: HTML entities (`&#x20;`, `&nbsp;`, `&amp;` …) and
+    /// Markdown backslash escapes (`\- Erika:` is a list item, `1\.` a number). Table pipes stay escaped.
+    static func unescape(_ line: String) -> String {
+        var s = line
+        if s.contains("&") {
+            for (e, c) in [("&nbsp;", " "), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&#39;", "'"), ("&apos;", "'")] {
+                s = s.replacingOccurrences(of: e, with: c)
+            }
+            // Numeric entities: &#x20; &#32;
+            while let r = s.range(of: #"&#(x[0-9A-Fa-f]{1,6}|[0-9]{1,7});"#, options: .regularExpression) {
+                let body = s[r].dropFirst(2).dropLast()
+                let code = body.hasPrefix("x") ? UInt32(body.dropFirst(), radix: 16) : UInt32(body)
+                let ch = code.flatMap(Unicode.Scalar.init).map { $0 == "\u{A0}" ? " " : String(Character($0)) } ?? ""
+                s.replaceSubrange(r, with: ch)
+            }
+            s = s.replacingOccurrences(of: "&amp;", with: "&")
+        }
+        guard s.contains("\\") else { return s }
+        var out = "", escaped = false
+        for ch in s {
+            if escaped {
+                if ch != "|" && ch.isASCII && ch.isPunctuation || ch.isASCII && ch.isSymbol && ch != "|" { out.append(ch) } else { out.append("\\"); out.append(ch) }
+                escaped = false
+            } else if ch == "\\" { escaped = true } else { out.append(ch) }
+        }
+        if escaped { out.append("\\") }
         return out
     }
 
@@ -222,12 +261,19 @@ public enum TemplateParser {
         return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// All filled tables of a meeting as one Markdown block under a heading naming the template.
-    public static func block(templateTitle: String, tables: [TemplateTable]) -> String? {
+    /// The filled-in checklist items and all filled tables of a meeting as one Markdown block under
+    /// a heading naming the template.
+    public static func block(templateTitle: String, tables: [TemplateTable], checklist: [PlaybookItem] = []) -> String? {
         let used = tables.filter { $0.filledCount > 0 }
-        guard !used.isEmpty else { return nil }
+        let answered = checklist.filter { !($0.answer ?? "").trimmingCharacters(in: .whitespaces).isEmpty }
+        guard !used.isEmpty || !answered.isEmpty else { return nil }
         var s = "## \(templateTitle)\n"
         var section = ""
+        for (i, item) in answered.enumerated() {
+            if item.section != section, !item.section.isEmpty { section = item.section; s += "\n### \(section)\n" }
+            else if i == 0 { s += "\n" }
+            s += "- " + checklistLine(item) + "\n"
+        }
         for t in used {
             if t.section != section, !t.section.isEmpty { section = t.section; s += "\n### \(section)\n" }
             s += "\n" + t.markdown()

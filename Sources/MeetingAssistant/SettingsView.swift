@@ -26,6 +26,7 @@ struct GeneralSettings: View {
     @EnvironmentObject var state: AppState
     var body: some View {
         Form {
+            LaunchAtLoginToggle(login: state.launchAtLogin)
             TextField("Your name", text: $state.prefs.myName, prompt: Text("Me"))
             LabeledContent("Default meeting type") {
                 AyaSelect(selection: $state.prefs.defaultMode, options: MeetingMode.allCases.map { ($0, $0.title) }).frame(maxWidth: 240)
@@ -48,6 +49,25 @@ struct GeneralSettings: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+private struct LaunchAtLoginToggle: View {
+    @ObservedObject var login: LaunchAtLogin
+
+    var body: some View {
+        Toggle("Open MeetingAssistant at login", isOn: Binding(get: { login.isEnabled || login.needsApproval },
+                                                                set: { login.set($0) }))
+            .disabled(!LaunchAtLogin.isAvailable)
+            .onAppear { login.refresh() }
+        if login.needsApproval {
+            HStack {
+                Text("Allow MeetingAssistant in System Settings › General › Login Items.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Button("Open Login Items") { login.openLoginItems() }.controlSize(.small)
+            }
+        }
+        if let e = login.error { Text(e).font(.caption).foregroundStyle(.red) }
     }
 }
 

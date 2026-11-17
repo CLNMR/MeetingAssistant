@@ -36,6 +36,34 @@ import Testing
         #expect(s.apply(.playbook(item: "P1.1", status: .partial, evidence: "e")) == ["p:P1.1"])
         #expect(s.apply(.playbook(item: "P9", status: .covered, evidence: nil)).isEmpty)
     }
+
+    @Test func mergesOpenPoints() {
+        #expect(AssistOp.parse(#"{"op":"open_point_merge","ids":["O2","O3"],"into":"O1","text":"Budget: Freigabe offen"}"#)
+                == .openPointMerge(ids: ["O2", "O3"], into: "O1", text: "Budget: Freigabe offen"))
+        #expect(AssistOp.parse(#"{"op":"open_point_merge","ids":[],"into":"O1","text":"x"}"#) == nil)
+        var s = AssistState()
+        s.apply(.openPoint(.init(id: "O1", text: "Budget", raisedBy: "Erika", status: .answered)))
+        s.apply(.openPoint(.init(id: "O2", text: "Wer gibt frei?")))
+        s.apply(.openPoint(.init(id: "O3", text: "Lager")))
+        s.apply(.openPoint(.init(id: "O4", text: "Bis wann?", status: .parked)))
+        #expect(s.apply(.openPointMerge(ids: ["O1", "O2", "O4"], into: "O1", text: "Budget: Freigabe offen")) == ["o:O1"])
+        #expect(s.openPoints.map(\.id) == ["O1", "O3"])
+        #expect(s.openPoints[0].text == "Budget: Freigabe offen" && s.openPoints[0].status == .open && s.openPoints[0].raisedBy == "Erika")
+        // A new id takes the place of the first merged point.
+        s.apply(.openPointMerge(ids: ["O3"], into: "O9", text: "Lager: zu klein"))
+        #expect(s.openPoints.map(\.id) == ["O1", "O9"])
+        // Unknown ids change nothing.
+        #expect(s.apply(.openPointMerge(ids: ["X1"], into: "X2", text: "x")).isEmpty)
+        #expect(s.openPoints.count == 2)
+    }
+
+    @Test func tickShowsTheCurrentOpenPoints() {
+        let m = AssistPrompts.tickMessage(lines: ["[00:00:01] Erika: Hallo"], events: [], summary: [],
+                                          openPoints: [.init(id: "O1", text: "Budget: offen")])
+        #expect(m.contains("CURRENT OPEN POINTS (rewrite a point when the new lines add to it; combine points about the same issue with open_point_merge):\n  O1 (open) Budget: offen"))
+        #expect(AssistPrompts.tickMessage(lines: ["x"], events: []).contains("CURRENT OPEN POINTS: (none)"))
+        #expect(!AssistPrompts.tickMessage(lines: [], events: ["e"]).contains("OPEN POINTS"))
+    }
 }
 
 @Suite struct PlaybookParserTests {
@@ -504,7 +532,69 @@ import Testing
         #expect(m.hasPrefix(AssistPrompts.contextBody(c)))
     }
 
+    @Test func catchUpNamesTheMeetingLanguage() {
+        let lines = [AssistLine(start: 10, speaker: "Erika Musterfrau", text: "Wir brauchen das Angebot bis Freitag, sonst verschiebt sich der Start."),
+                     AssistLine(start: 40, speaker: "Me", text: "Ich schicke es morgen, die Preise kläre ich noch mit dem Team.")]
+        let p = AssistPrompts.catchUpPrompt(lines: lines, minutes: 2, myName: "Max Beispiel", title: "MUSTER SOLAR")!
+        #expect(p.contains("LANGUAGE: German"))
+        #expect(p.hasSuffix("Answer in German."))
+        let en = [AssistLine(start: 5, speaker: "Me", text: "We need the offer by Friday, otherwise the project start moves.")]
+        #expect(AssistPrompts.catchUpPrompt(lines: en, minutes: 2, myName: "Me", title: "")!.contains("LANGUAGE: English"))
+        #expect(AssistPrompts.spokenLanguage("ja ok") == nil)
+    }
+
     @Test func timeoutHasItsOwnError() {
         #expect(ClaudeCLI.CLIError.timedOut(600).errorDescription == "Claude did not answer within 600 s.")
+    }
+}
+
+@Suite struct RecapTitleTests {
+    @Test func sessionTitleFromRecap() {
+        let cfg = AyaConfig()
+        func field(_ v: String, include: Bool = true) -> ProposedValue {
+            .init(key: cfg.meetingTitleField, label: "Title", kind: .text, options: [], old: "", value: v, reason: nil, include: include)
+        }
+        #expect(RecapBuilder.title([field("Kick-off MUSTER SOLAR")], config: cfg) == "Kick-off MUSTER SOLAR")
+        #expect(RecapBuilder.title([field("## Workshop Beispilop\nmehr")], config: cfg) == "Workshop Beispilop")
+        #expect(RecapBuilder.title([field("x", include: false)], config: cfg) == nil)
+        #expect(RecapBuilder.title([field("   ")], config: cfg) == nil)
+        #expect(RecapBuilder.sessionTitle(String(repeating: "a", count: 200)).count == 121)
+    }
+}
+
+@Suite struct ChecklistAnswerTests {
+    @Test func escapedTemplateBecomesAChecklist() {
+        let md = "\\- Erika:&#x20;\n\\- Max:&#x20;\n\\* Beispilop &amp; Co\n1\\. Rückblick\nPreis \\| Menge"
+        let p = TemplateParser.parse(md)
+        #expect(p.items.map(\.text) == ["Erika:", "Max:", "Beispilop & Co", "Rückblick"])
+        #expect(p.notes == ["Preis \\| Menge"])
+        #expect(TemplateParser.unescape("a&nbsp;b &#32;c") == "a b  c")
+    }
+
+    @Test func playbookOpCarriesAnAnswer() {
+        #expect(AssistOp.parse(#"{"op":"playbook","item":"P1","status":"covered","answer":"Win: Release · Pain: Bugs"}"#)
+                == .playbook(item: "P1", status: .covered, evidence: nil, answer: "Win: Release · Pain: Bugs"))
+        var s = AssistState()
+        s.playbook = [PlaybookItem(id: "P1", section: "Runde", text: "Erika: Win: % / Pain: %"), PlaybookItem(id: "P2", section: "Runde", text: "Ziel geklärt")]
+        s.apply(.playbook(item: "P1", status: .covered, evidence: nil, answer: "Win: Release · Pain: Bugs"))
+        s.apply(.playbook(item: "P1", status: .covered, evidence: "x"))      // no answer keeps the old one
+        #expect(s.playbook[0].answer == "Win: Release · Pain: Bugs")
+        s.playbook[1].answer = "ja"
+        let block = TemplateParser.block(templateTitle: "Weekly", tables: [], checklist: s.playbook)
+        #expect(block == "## Weekly\n\n### Runde\n- **Erika:** Win: Release · Pain: Bugs\n- Ziel geklärt: ja")
+        var named = PlaybookItem(id: "P3", section: "", text: "Budget:"); named.answer = "50k"
+        #expect(TemplateParser.checklistLine(named) == "**Budget:** 50k")
+        #expect(TemplateParser.block(templateTitle: "Weekly", tables: [], checklist: [PlaybookItem(id: "P4", section: "", text: "x")]) == nil)
+    }
+}
+
+@Suite struct AyaWebLinkTests {
+    @Test func linksUseTheRecordType() {
+        #expect(AyaWebLink.url(workspace: "WS1", recordType: "pmMeetings", record: "R1")?.absoluteString
+                == "https://app.hey-aya.ai/workspace/WS1/record/pmMeetings/R1")
+        #expect(AyaWebLink.url(workspace: "WS1", recordType: "pmMeetings")?.absoluteString
+                == "https://app.hey-aya.ai/workspace/WS1/list/pmMeetings/")
+        #expect(AyaWebLink.url(workspace: "WS1", recordType: "pmMeetings", record: "")?.absoluteString.hasSuffix("/list/pmMeetings/") == true)
+        #expect(AyaWebLink.url(workspace: "", recordType: "x") == nil)
     }
 }

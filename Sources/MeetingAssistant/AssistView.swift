@@ -860,8 +860,14 @@ private struct AssistLiveView: View {
                                         .foregroundStyle(item.status == .covered ? Aya.success : item.status == .partial ? Aya.warning : Aya.textSubtle)
                                 }
                                 .buttonStyle(.plain)
-                                Text(item.text).font(.system(size: 13)).foregroundStyle(item.status == .covered ? Aya.textMuted : Aya.text)
-                                    .help(item.evidence ?? "")
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(item.text).font(.system(size: 13)).foregroundStyle(item.status == .covered ? Aya.textMuted : Aya.text)
+                                    if let a = item.answer, !a.isEmpty {
+                                        Text(a).font(.system(size: 12)).foregroundStyle(Aya.agentTextMid)
+                                            .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
+                                .help(item.evidence ?? "")
                             }
                             .modifier(Highlight(on: assist.state.changed.contains("p:\(item.id)")))
                         }
@@ -1173,9 +1179,9 @@ private struct AssistReviewView: View {
             StepLine(step: assist.recapState)
             if !assist.recapFields.isEmpty {
                 VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array($assist.recapFields.enumerated()), id: \.offset) { i, $f in
-                        if i > 0 { Divider().overlay(Aya.border) }
-                        FieldEditor(field: $f).padding(.vertical, 10)
+                    ForEach(assist.recapFields) { f in
+                        if f.id != assist.recapFields.first?.id { Divider().overlay(Aya.border) }
+                        FieldEditor(field: recapBinding(f)).padding(.vertical, 10)
                     }
                 }
                 HStack {
@@ -1189,6 +1195,33 @@ private struct AssistReviewView: View {
         }
         .padding(18)
         .ayaSurface()
+    }
+
+    // Bindings by id, not by position: when the list is replaced (Draft Again, Propose Again, another
+    // meeting), a text field that is still committing its edit must not read a position that is gone.
+
+    private func recapBinding(_ f: ProposedValue) -> Binding<ProposedValue> {
+        Binding(get: { assist.recapFields.first { $0.id == f.id } ?? f },
+                set: { v in if let i = assist.recapFields.firstIndex(where: { $0.id == v.id }) { assist.recapFields[i] = v } })
+    }
+
+    private func clientBinding(_ v: ProposedValue) -> Binding<ProposedValue> {
+        Binding(get: { assist.crm?.client.first { $0.id == v.id } ?? v },
+                set: { n in if let i = assist.crm?.client.firstIndex(where: { $0.id == n.id }) { assist.crm?.client[i] = n } })
+    }
+
+    private func contactIncludeBinding(_ c: ContactProposal) -> Binding<Bool> {
+        Binding(get: { assist.crm?.contacts.first { $0.id == c.id }?.include ?? c.include },
+                set: { n in if let i = assist.crm?.contacts.firstIndex(where: { $0.id == c.id }) { assist.crm?.contacts[i].include = n } })
+    }
+
+    private func contactBinding(_ c: ContactProposal, _ v: ProposedValue) -> Binding<ProposedValue> {
+        Binding(get: { assist.crm?.contacts.first { $0.id == c.id }?.changes.first { $0.id == v.id } ?? v },
+                set: { n in
+                    guard let i = assist.crm?.contacts.firstIndex(where: { $0.id == c.id }),
+                          let j = assist.crm?.contacts[i].changes.firstIndex(where: { $0.id == n.id }) else { return }
+                    assist.crm?.contacts[i].changes[j] = n
+                })
     }
 
     /// Where the recap goes: the planned meeting, another meeting of that day, or a new one.
@@ -1237,11 +1270,11 @@ private struct AssistReviewView: View {
                         Image(systemName: "building.2").foregroundStyle(Aya.primary)
                         Text(assist.record?.context.clientTitle ?? "Client").font(.system(size: 14, weight: .semibold))
                     }
-                    ForEach(Binding(get: { assist.crm!.client }, set: { assist.crm!.client = $0 })) { $c in ChangeRow(change: $c) }
+                    ForEach(p.client) { v in ChangeRow(change: clientBinding(v)) }
                 }
-                ForEach(Binding(get: { assist.crm!.contacts }, set: { assist.crm!.contacts = $0 })) { $c in
+                ForEach(p.contacts) { c in
                     VStack(alignment: .leading, spacing: 8) {
-                        Toggle(isOn: $c.include) {
+                        Toggle(isOn: contactIncludeBinding(c)) {
                             HStack(spacing: 6) {
                                 Text(c.name).font(.system(size: 14, weight: .semibold))
                                 if c.contactID == nil { AyaTag(text: "New contact", color: Aya.agentTextMid, icon: "plus") }
@@ -1249,7 +1282,7 @@ private struct AssistReviewView: View {
                         }
                         .toggleStyle(.checkbox)
                         if c.include {
-                            ForEach($c.changes) { $ch in ChangeRow(change: $ch, showToggle: c.contactID != nil) }
+                            ForEach(c.changes) { ch in ChangeRow(change: contactBinding(c, ch), showToggle: c.contactID != nil) }
                                 .padding(.leading, 20)
                         }
                     }

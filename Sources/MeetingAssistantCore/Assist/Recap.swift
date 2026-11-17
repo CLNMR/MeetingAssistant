@@ -62,6 +62,21 @@ public struct CRMProposal: Codable, Sendable {
 }
 
 public enum RecapBuilder {
+    /// The recap's title field value, when it is ticked and filled.
+    public static func title(_ fields: [ProposedValue], config: AyaConfig) -> String? {
+        guard let f = fields.first(where: { $0.key == config.meetingTitleField }), f.include else { return nil }
+        let t = sessionTitle(f.value)
+        return t.isEmpty ? nil : t
+    }
+
+    /// A title fit for a session name: the first line, without Markdown heading marks, at most 120 characters.
+    public static func sessionTitle(_ s: String) -> String {
+        var t = s.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+        t = t.trimmingCharacters(in: .whitespaces)
+        while t.hasPrefix("#") { t.removeFirst() }
+        t = t.trimmingCharacters(in: .whitespaces)
+        return t.count > 120 ? String(t.prefix(120)).trimmingCharacters(in: .whitespaces) + "…" : t
+    }
 
     /// The transcript as text lines, from the final transcript when there is one.
     public static func transcriptLines(sessionID: String, fallback: [AssistLine], myName: String) -> [String] {
@@ -164,7 +179,8 @@ public enum RecapBuilder {
         // Filled tables go under a heading named after the template, replacing that block if it
         // is already there (saving again does not duplicate them).
         if let key = config.tablesField(in: schema),
-           let block = TemplateParser.block(templateTitle: record.context.playbookTitle ?? "Template", tables: tables) {
+           let block = TemplateParser.block(templateTitle: record.context.playbookTitle ?? "Template", tables: tables,
+                                            checklist: record.state.playbook) {
             let base = values[key]?.string ?? existing?[key]?.string ?? ""
             values[key] = .string(TemplateParser.merge(existing: base, block: block))
         }
@@ -376,6 +392,10 @@ public enum RecapBuilder {
         s += "\n\nLIVE SUMMARY:\n" + r.state.summary.map { "- \($0)" }.joined(separator: "\n")
         s += "\n\nOPEN POINTS:\n" + r.state.openPoints.map { "- [\($0.status.rawValue)] \($0.text)" }.joined(separator: "\n")
         s += "\n\nQUESTIONS ASKED:\n" + r.state.askedQuestions.map { "- \($0.text)" }.joined(separator: "\n")
+        let filled = r.state.playbook.filter { !($0.answer ?? "").isEmpty }
+        if !filled.isEmpty {
+            s += "\n\nCHECKLIST ANSWERS:\n" + filled.map { "- \(TemplateParser.checklistLine($0))" }.joined(separator: "\n")
+        }
         return s
     }
 }

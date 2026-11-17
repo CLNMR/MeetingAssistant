@@ -12,6 +12,8 @@ final class TranscriptSegment {
     let isRecording: Bool
     var lines: [LiveLine] = []
     var transcriber: LiveTranscriber?
+    /// Names given to live speaker labels during the meeting (Assist), e.g. "system-1" → "Erika Musterfrau".
+    var names: [String: String] = [:]
     init(start: Date, mode: MeetingMode, isRecording: Bool) {
         self.start = start; self.mode = mode; self.isRecording = isRecording
     }
@@ -144,6 +146,13 @@ final class ListenController: ObservableObject {
 
     func update(_ seg: TranscriptSegment, lines: [LiveLine]) { seg.lines = lines; scheduleRebuild() }
 
+    /// Names for the running recording's speakers; they stay on its lines after the recording ends.
+    func setRecordingNames(_ names: [String: String]) {
+        guard let seg = segments.last(where: \.isRecording), seg.names != names else { return }
+        seg.names = names
+        scheduleRebuild()
+    }
+
     /// Coalesce bursts of updates (two tracks, speaker labels) into one redraw.
     private var rebuildScheduled = false
     private func scheduleRebuild() {
@@ -188,7 +197,7 @@ final class ListenController: ObservableObject {
                 let date = seg.start.addingTimeInterval(l.start)
                 guard date >= hiddenBefore else { continue }
                 let key = l.speaker ?? "?"
-                let name = l.speaker == nil ? "…" : labels.label(for: key)
+                let name = l.speaker == nil ? "…" : (seg.names[key] ?? labels.label(for: key))
                 let colorKey = "\(si)-\(key)"
                 if var last = out.last, last.speaker == name, last.colorKey == colorKey,
                    date.timeIntervalSince(last.date) < 120 {

@@ -385,7 +385,7 @@ public actor AssistEngine {
         history += lines
         do {
             try send(AssistPrompts.tickMessage(lines: lines.map(\.rendered), events: evs.isEmpty && lines.isEmpty ? ["user asks: suggest a question now"] : evs,
-                                               summary: state.summary))
+                                               summary: state.summary, openPoints: state.openPoints))
             unansweredEvents = evs
         } catch {
             pending = lines + pending; events = evs + events

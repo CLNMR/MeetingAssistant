@@ -16,7 +16,7 @@ All user-visible strings in the app are English and are quoted verbatim below. S
 
 | Element | Behaviour |
 |---|---|
-| Logo tile (32 × 32 blue gradient rounded square with a white rounded-triangle mark) | If Aya is configured, clicking it opens the **Aya meetings list** in the browser, at `https://app.hey-aya.ai/workspace/<meetingsWorkspaceId>/recordlist/<meetingsListTechName>`. If no meetings list is chosen, it opens the organization at `https://app.hey-aya.ai/org/<orgId>`. Tooltip: "Open the meetings in Aya", or "Open Aya" when it falls back to the organization. With no org id the logo is inert, with the tooltip "Aya is not connected yet. Connect it in Settings › Assist." Hand cursor when it is a link. 8 px below it: |
+| Logo tile (32 × 32 blue gradient rounded square with a white rounded-triangle mark) | If Aya is configured, clicking it opens the **Aya meetings list** in the browser, at `https://app.hey-aya.ai/workspace/<meetingsWorkspaceId>/list/<meetingsListTechName>/`. If no meetings list is chosen, it opens the organization at `https://app.hey-aya.ai/org/<orgId>`. Tooltip: "Open the meetings in Aya", or "Open Aya" when it falls back to the organization. With no org id the logo is inert, with the tooltip "Aya is not connected yet. Connect it in Settings › Assist." Hand cursor when it is a link. 8 px below it: |
 | Mode button "Scribe" (icon-only 32 px, borderless) | Switches to Scribe. Tooltip "Scribe: record and transcribe on this Mac (⌘1)". Shows the active style (primary tint 12 % fill, primary icon) when selected. |
 | Mode button "Assist" | Switches to Assist. Tooltip "Assist: live meeting assistant with Aya and Claude (⌘2)". |
 | *(spacer)* | |
@@ -231,6 +231,7 @@ The three cards sit side by side, separated by **horizontal resize handles** (8 
 - missing: empty circle.
 - partial: half-filled circle in `warning`.
 - covered: filled check circle in `success`, with muted text.
+- Below the text, a filled-in item shows Claude's answer (12 pt, agent colour, selectable, wraps).
 - Clicking toggles covered ↔ missing. The item's tooltip is Claude's evidence quote.
 
 #### 6.5 Tables card (template fill-in tables)
@@ -268,7 +269,7 @@ The popover is 330 px wide with 14 px padding.
 - **Lookup order**: first the meeting's contacts (by contact id, else by name); then the team members by name; then, if a contact id is given and nothing matched, the contact is loaded from Aya asynchronously. Generic names never look anything up.
 - **Name matching**: an exact match ignoring case and accents wins. Otherwise the match is the **only** entry whose name parts each start with a typed word ("Erika" → "Erika Musterfrau", but not if there are two Erikas).
 - **Rename box** (only when renaming is allowed): a divider, the label "Who is this?", a **Name** text field (Return saves), up to 8 suggestion chips, and a small primary **Save** button (disabled when empty). Suggestions come from attendees, then the client's contacts, then team members, without generic names, without my name and without duplicates, excluding the current name. Typing filters them (contains, case- and accent-insensitive). Clicking a chip saves immediately. Saving trims the name, calls rename and closes the popover.
-- **Live rename** sends `renameSpeaker(rawLabel, name)` to the engine. The engine updates `speakerNames` and Claude's context.
+- **Live rename** sends `renameSpeaker(rawLabel, name)` to the engine. The engine updates `speakerNames` and Claude's context. While recording, the named speakers (non-generic names, resolved to attendees) are also passed to the floating live transcript window, which then labels the recording's lines with them (01-recording, Floating live transcript window).
 
 *Mac implementation:* `AssistLiveView`, `ResizeHandle`, `Highlight` in `AssistView.swift`; `LiveTablesCard` and `LiveTableSheet` in `AssistTablesView.swift`; `PersonPopover` in `AssistPeopleViews.swift`; `liveName`, `rawSpeaker`, `renameSpeaker`, `nameSuggestions`, `personCard`, `match`, `loadContact` in `AssistMeetings.swift`; `markAsked`, `dismiss`, `promote`, `suggestNow`, `setOpenPoint`, `setPlaybook`, `setTableCell`, `whatDidIMiss`, `togglePause` in `AssistController.swift`. Width and height shares are in `@AppStorage` keys `assistLive.summaryShare`, `assistLive.openShare`, `assistLive.transcriptHeight`.
 
@@ -339,7 +340,7 @@ Title "Speakers" (16 pt semibold), subtitle "Names are used in the transcript an
 
 #### 8.2 Meeting recap
 Header: the title "Meeting recap" and the subtitle "→ <meetings list label> in <workspace label>". On the right:
-- When uploaded: tag **"In Aya"** (success, check icon) and an **"Open in Aya"** link button (secondary pill, external-link icon). It opens `https://app.hey-aya.ai/workspace/<ws>/recordlist/<list>/record/<recordId>`; tooltip "Open this meeting in Aya".
+- When uploaded: tag **"In Aya"** (success, check icon) and an **"Open in Aya"** link button (secondary pill, external-link icon). It opens `https://app.hey-aya.ai/workspace/<ws>/record/<list>/<recordId>` (02-assist-core, Web URLs); tooltip "Open this meeting in Aya".
 - **Draft Recap** (agent pill) when there is no draft, or **Draft Again** (secondary pill) when there is. It is disabled while working. **Draft Again** first asks "Draft the recap again?" ("Claude writes a new recap. Your edits to the current one are replaced.", destructive button "Draft Again", Cancel).
 
 **Target row:** the label "Save to", then an Aya select (max 420 px) with these options:
@@ -389,6 +390,12 @@ Editing commands of the editor (positions in UTF-16 units):
 - Template tables go into the configured field.
 - Save `recapRecordID` and the upload time. The StepLine then shows "Saved in Aya: “<title>” (<list label>)." Saving again updates the same meeting.
 
+**Session name = Aya title.** The recording in the sidebar is named after the meeting's title in Aya, so it does not stay "Meeting":
+- After saving to Aya, the session is renamed to the title that was written (the value sent for the configured title field, else the title of the returned record). This always applies, also over a name the user typed.
+- After a recap draft, the session is renamed to the draft's title field (only when ticked and filled), but only while the session still has its automatic name: `Meeting` or the context title it got at the start.
+- At app start, every Assist session already saved to Aya whose name is still automatic gets the title from its stored recap draft (same rule).
+- The title is cleaned for use as a name: first line only, leading `#` marks and spaces removed, cut to 120 characters plus `…`. An empty result changes nothing.
+
 #### 8.3 Template tables (review)
 Title "Template tables". The subtitle is "Saved with the recap into “<field label>”. Long tables only with the rows that were answered." or, when no field is configured, "Not saved to Aya (Settings › Assist › Template tables).".
 - Button **Complete from Transcript** (agent pill; shows **Complete Again** in secondary style once completed). Tooltip "Claude fills the tables from the final transcript. Cells you edited stay as they are.". StepLine "Claude is completing the tables…". The result is saved to the record immediately.
@@ -416,7 +423,7 @@ context, final live state, live lines, recap draft, completed tables, uploaded m
 #### 8.7 Delete meeting (Review header or Meetings context menu)
 A confirmation dialog titled "Delete “<title>”?" with the message "The recording, the transcript and the notes on this Mac are deleted. What was saved in Aya stays there." and a destructive **Delete** button (plus the system Cancel). Deleting the meeting under review first finishes the review, then deletes the session folder.
 
-*Mac implementation:* `AssistReviewView`, `FieldEditor`, `ChangeRow`, `editor(for:)` in `AssistView.swift`; the Markdown field is `MarkdownField`, `MarkdownPreview` and `MarkdownTextView` (an `NSTextView` that re-styles its text storage on every change) in `MarkdownEditor.swift`, with parsing, highlighting and the editing commands in Core `Markdown` (`blocks`, `inline`, `highlight`, `wrap`, `toggleLines`, `newline`, `indent`; `Util/Markdown.swift`); `ReviewSpeakersSection`, `deleteMeetingDialog` in `AssistPeopleViews.swift`; `ReviewTablesSection` in `AssistTablesView.swift`. Controller: `openReview`, `loadTargets`, `setTarget`, `targetChoices`, `waitForTranscriptThenDraft`, `draftRecap`, `completeTables`, `setReviewCell`, `tablesFieldLabel`, `uploadRecap`, `proposeCRM`, `applyCRM`, `finishReview` (`AssistController.swift`); `saveDraftSoon`, `flushDraft`, `carrySpeakerNames`, `renameFinalSpeaker`, `deleteMeeting` (`AssistMeetings.swift`).
+*Mac implementation:* `AssistReviewView`, `FieldEditor`, `ChangeRow`, `editor(for:)` in `AssistView.swift`; the Markdown field is `MarkdownField`, `MarkdownPreview` and `MarkdownTextView` (an `NSTextView` that re-styles its text storage on every change) in `MarkdownEditor.swift`, with parsing, highlighting and the editing commands in Core `Markdown` (`blocks`, `inline`, `highlight`, `wrap`, `toggleLines`, `newline`, `indent`; `Util/Markdown.swift`); `ReviewSpeakersSection`, `deleteMeetingDialog` in `AssistPeopleViews.swift`; `ReviewTablesSection` in `AssistTablesView.swift`. Controller: `openReview`, `loadTargets`, `setTarget`, `targetChoices`, `waitForTranscriptThenDraft`, `draftRecap`, `completeTables`, `setReviewCell`, `tablesFieldLabel`, `uploadRecap`, `nameSession`, `nameSavedMeetings`, `proposeCRM`, `applyCRM`, `finishReview` (`AssistController.swift`); `RecapBuilder.title`, `RecapBuilder.sessionTitle` (Core `Assist/Recap.swift`); `saveDraftSoon`, `flushDraft`, `carrySpeakerNames`, `renameFinalSpeaker`, `deleteMeeting` (`AssistMeetings.swift`).
 
 *Windows notes:* Use a `ContentDialog` for delete (PrimaryButton "Delete", styled as danger). Debounce the autosave with a timer reset on every `PropertyChanged`. Flush on navigation and on window close (the Mac does not flush explicitly on quit; Windows should).
 

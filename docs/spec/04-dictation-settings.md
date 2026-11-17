@@ -334,7 +334,11 @@ Data model (persisted in preferences as JSON):
 
 Onboarding is minimal: on first launch the main window shows a banner with **Download Models** (~1.5 GB, from Hugging Face). Dictation needs the Parakeet model from that download. For in-person meetings the user records a 20 s voice sample (Settings › Voices). Scribe+ and Assist require installing Claude Code and running `claude` once to log in. There is no welcome wizard.
 
-**Windows notes:** Windows has no Accessibility permission gate for UIA/`SendInput` (except UIPI for elevated targets, 3.1). Microphone: Settings › Privacy & security › Microphone › *Let desktop apps access your microphone*; detect `E_ACCESSDENIED` from WASAPI and show the equivalent toast. Drop the Accessibility section from the Dictation tab or replace it with an "elevated windows" hint.
+**Open at login question:** the first time the main window opens (flag `launchAtLogin.asked` not set in the defaults domain; also shown once to existing users after updating), an alert asks `Open MeetingAssistant at login?` with message `Dictation, the menu-bar menu and recording shortcuts are then ready right after you log in. You can change this later in Settings › General.` and buttons *Open at Login* (registers the login item) and *Not Now* (cancel). Either answer sets the flag; the question never comes back. Not asked when the app does not run from an installed bundle or in the debug snapshot/test modes. At login the app opens as on a normal launch.
+
+**Mac implementation:** `LaunchAtLogin` in `Sources/MeetingAssistant/LaunchAtLogin.swift` uses `SMAppService.mainApp` (`register`/`unregister`, `status` `.enabled` / `.requiresApproval`, `openSystemSettingsLoginItems()`); the alert is in `ContentView`.
+
+**Windows notes:** open at login = a value `MeetingAssistant` under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` with the quoted exe path (the toggle reads whether it exists; a packaged MSIX app uses a `StartupTask` instead, whose `DisabledByUser` state maps to *needs approval*). Store the asked flag in the preferences file. Windows has no Accessibility permission gate for UIA/`SendInput` (except UIPI for elevated targets, 3.1). Microphone: Settings › Privacy & security › Microphone › *Let desktop apps access your microphone*; detect `E_ACCESSDENIED` from WASAPI and show the equivalent toast. Drop the Accessibility section from the Dictation tab or replace it with an "elevated windows" hint.
 
 ---
 
@@ -448,6 +452,7 @@ Storage: app preferences as one JSON blob under key `preferences.v1` in the app'
 
 | Control | Pref key | Default | Notes |
 |---|---|---|---|
+| *Open MeetingAssistant at login* | – (system login items) | off until answered (3.5) | Reads and writes the operating system's login-item registration, not the preferences blob, so a change in the system's login-item settings shows here. If the system needs the user's approval, the toggle shows on with caption `Allow MeetingAssistant in System Settings › General › Login Items.` and button *Open Login Items*. A failure shows in red: `Could not turn on opening at login: <reason>`. Disabled when the app does not run from an installed app bundle. |
 | *Your name* (text, placeholder `Me`) | `myName` | `Me` | Label for the user's speaker; empty → `Me` |
 | *Default meeting type* | `defaultMode` | `call` | `call` (Call), `inPerson` (In person), `hybrid` (Hybrid) |
 | *Show live transcript while recording* | `liveTranscription` | on | |

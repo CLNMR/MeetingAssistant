@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var state: AppState
+    @State private var askLaunchAtLogin = false
 
     var body: some View {
         HStack(spacing: 8) {
@@ -14,7 +15,14 @@ struct ContentView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .alert("Open MeetingAssistant at login?", isPresented: $askLaunchAtLogin) {
+                Button("Open at Login") { state.launchAtLogin.answer(true) }
+                Button("Not Now", role: .cancel) { state.launchAtLogin.answer(false) }
+            } message: {
+                Text("Dictation, the menu-bar menu and recording shortcuts are then ready right after you log in. You can change this later in Settings › General.")
+            }
         }
+        .onAppear { if LaunchAtLogin.shouldAsk { askLaunchAtLogin = true } }
         .padding([.horizontal, .bottom], 8)
         .padding(.top, 2)
         .ayaPage()
