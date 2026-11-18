@@ -10,6 +10,10 @@ What changed for the user, in one to three sentences.
 Sections: 01-recording (Live transcription), 03-assist-ui (Review)
 ```
 
+## 2026-11-18: Installable releases for Mac and Windows
+Pushing a `v*` tag builds a Mac DMG and a Windows setup plus portable zip and publishes them as a GitHub release. The README explains installing from the release on both platforms.
+Sections: 04-dictation-settings (9.2 build script and DMG, 9.5 releases and the Windows installer)
+
 ## 2026-11-17: Global shortcut to start or stop a meeting
 New setting *Start or stop a meeting* in Settings › General, default ⌃⌥⌘R, works in any app. It stops the running recording, or starts a meeting (Assist when Assist is open and ready, otherwise a Scribe recording), and always brings MeetingAssistant to the front.
 Sections: 04-dictation-settings (3.4 Global hotkeys: meeting shortcut, 6.1 General)

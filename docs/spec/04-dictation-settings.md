@@ -612,12 +612,13 @@ Unknown command or no arguments → usage text listing every command above (grou
 1. `swift build -c release` for `MeetingAssistant` and `msctl`.
 2. Compile MLX Metal shaders into `mlx.metallib` (only if missing or older than the kernel sources; installs the Metal toolchain once via `xcodebuild -downloadComponent MetalToolchain` if absent); copy it next to the binaries so `msctl` finds it.
 3. Assemble `build/MeetingAssistant.app`: binary, `Resources/Info.plist`, all resource bundles, the metallib as `mlx-swift_Cmlx.bundle/…/default.metallib`, `AppIcon.icns` (rendered once by `scripts/make_icon.swift`: blue→purple gradient rounded square with a white waveform/person symbol, converted with `sips`/`iconutil`).
-4. Sign: identity from `SIGN_IDENTITY`, else the first "Apple Development" or "Developer ID" identity in the keychain, else ad-hoc (`-`); `codesign --force --deep --options runtime --entitlements Resources/MeetingAssistant.entitlements`; verify.
-5. `--install`: replace `/Applications/MeetingAssistant.app`; remove an old `/Applications/MeetingScribe.app`.
+4. With `VERSION` set (release builds): `CFBundleShortVersionString` = `VERSION`, `CFBundleVersion` = the commit count.
+5. Sign: identity from `SIGN_IDENTITY`, else the first "Apple Development" or "Developer ID" identity in the keychain, else ad-hoc (`-`); `codesign --force --deep --options runtime --entitlements Resources/MeetingAssistant.entitlements`; verify.
+6. `--install`: replace `/Applications/MeetingAssistant.app`; remove an old `/Applications/MeetingScribe.app`.
 
-No notarization, no DMG, no auto-update. (Repo-local rule: quitting/reinstalling the app must only happen when no recording is active.)
+`scripts/package_mac.sh` (after `build_app.sh`, same `VERSION`) packs the app into `build/MeetingAssistant-<VERSION>-mac-arm64.dmg` (UDZO, with an `Applications` link). When `SIGN_IDENTITY` is a "Developer ID Application" identity and `NOTARY_APPLE_ID`, `NOTARY_PASSWORD`, `NOTARY_TEAM_ID` are set, it signs the DMG, notarizes it (`notarytool --wait`) and staples it; otherwise the release stays ad-hoc signed and users confirm it once (System Settings › Privacy & Security › *Open Anyway*). No auto-update. (Repo-local rule: quitting/reinstalling the app must only happen when no recording is active.)
 
-**Windows notes:** `dotnet publish -c Release -r win-x64` (and `win-arm64`) self-contained; package as MSIX or an Inno Setup/WiX installer; sign with `signtool` (an unsigned build triggers SmartScreen; a stable signature is also what keeps microphone consent and UIA `uiAccess` working across updates, analogous to keeping the bundle id). The installer must refuse to replace the app while a recording is running (mirror of the reinstall rule).
+**Windows notes:** `dotnet publish -c Release -r win-x64` self-contained (win-arm64 not yet released), packed by Inno Setup (`windows/installer/MeetingAssistant.iss`, see 9.5); sign with `signtool` (an unsigned build triggers SmartScreen; a stable signature is also what keeps microphone consent and UIA `uiAccess` working across updates, analogous to keeping the bundle id). The installer must refuse to replace the app while a recording is running (mirror of the reinstall rule).
 
 #### 9.3 Tests
 
@@ -635,6 +636,16 @@ A Windows port should port these tests 1:1 (same inputs and expected outputs) �
 On push to `main` and on pull requests; `macos-15` runner, 45-minute timeout: select the newest installed Xcode; cache `.build` keyed on `Package.resolved`; `swift build --build-tests`; `swift test --skip-build`; **secret check**: fail if `git grep -nE 'aya_key_[A-Za-z0-9]{20,}|sk-ant-[A-Za-z0-9-]{20,}'` matches in any non-Markdown file.
 
 **Windows notes:** a `windows-latest` job running `dotnet build` + `dotnet test` with the same secret grep; models are not downloaded in CI.
+
+#### 9.5 Releases (`.github/workflows/release.yml`)
+
+On a pushed tag `v*` (and by hand via *Run workflow*, which only uploads the files as workflow artifacts). Version = the tag without `v` (by hand: `0.0.0-dev.<n>`); a tag containing `-` makes a pre-release.
+
+- **mac** (`macos-15`, newest Xcode): optional signing certificate from secrets `MACOS_CERT_P12` (base64 .p12) and `MACOS_CERT_PASSWORD`, imported into a temporary keychain; else ad-hoc (`SIGN_IDENTITY=-`). `VERSION=… build_app.sh`, then `package_mac.sh` (notarizes when the `NOTARY_*` secrets exist). Output `MeetingAssistant-<v>-mac-arm64.dmg`.
+- **windows** (`windows-latest`): `dotnet test`; `dotnet publish` of the app, `win-x64`, self-contained, `Version` = the numeric part; Inno Setup 6 (installed with Chocolatey) builds `MeetingAssistant-<v>-windows-x64-setup.exe`; the publish folder is also zipped as `MeetingAssistant-<v>-windows-x64-portable.zip`.
+- **release** (tags only): creates the GitHub release "MeetingAssistant <v>" with the three files, short install notes and the generated change list.
+
+Installer (`windows/installer/MeetingAssistant.iss`): per user, no administrator rights, into `%LOCALAPPDATA%\Programs\MeetingAssistant`; Start menu entry, optional desktop icon, *Launch* at the end; Windows 10 2004+ x64. Fixed `AppId` so updates replace the old version (all old files are removed first). `AppMutex` = the app's single-instance mutex `Local\de.local.MeetingScribe.MeetingAssistant` and `CloseApplications=no`: setup asks the user to quit the app and never closes it, so a recording is never cut off. The uninstaller keeps `%LOCALAPPDATA%\MeetingAssistant` and deletes the `Run` value `MeetingAssistant` (open at login). Unsigned for now (SmartScreen asks once).
 
 ### 10. Intended differences and notes for the port
 

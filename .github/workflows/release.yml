@@ -1,0 +1,126 @@
+name: Release
+
+# Push a tag like v1.2.0 to build the Mac DMG and the Windows installer and publish them as a
+# GitHub release. "Run workflow" by hand builds the same files as workflow artifacts only.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  mac:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # the build number is the commit count
+      - name: Version
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          [[ "$GITHUB_REF_TYPE" == tag ]] || V="0.0.0-dev.$(git rev-list --count HEAD)"
+          echo "VERSION=$V" >> "$GITHUB_ENV"
+      - name: Use the newest Xcode
+        run: sudo xcode-select -s "$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
+      - uses: actions/cache@v4
+        with:
+          path: .build
+          key: spm-release-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: spm-release-${{ runner.os }}-
+      # Optional: a "Developer ID Application" certificate (base64 .p12) and its password as
+      # secrets. Without them the app is ad-hoc signed and users confirm it once (README › Install).
+      - name: Import signing certificate
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        if: env.MACOS_CERT_P12 != ''
+        run: |
+          KC="$RUNNER_TEMP/release.keychain-db"
+          security create-keychain -p ci "$KC"
+          security set-keychain-settings -lut 3600 "$KC"
+          security unlock-keychain -p ci "$KC"
+          echo "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k ci "$KC"
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          ID=$(security find-identity -p codesigning -v "$KC" | awk -F'"' '/Developer ID Application/ {print $2; exit}')
+          echo "SIGN_IDENTITY=$ID" >> "$GITHUB_ENV"
+      - name: Ad-hoc signing
+        if: env.SIGN_IDENTITY == ''
+        run: echo "SIGN_IDENTITY=-" >> "$GITHUB_ENV"
+      - name: Build the app
+        run: ./scripts/build_app.sh
+      - name: Package
+        env:
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+        run: ./scripts/package_mac.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac
+          path: build/MeetingAssistant-*.dmg
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: windows/global.json
+      - name: Version
+        run: |
+          $v = "$env:GITHUB_REF_NAME" -replace '^v', ''
+          if ($env:GITHUB_REF_TYPE -ne 'tag') { $v = "0.0.0-dev.$env:GITHUB_RUN_NUMBER" }
+          # Assembly versions take only numbers: 1.2.0-beta.1 -> 1.2.0
+          $num = ($v -split '-')[0]
+          "VERSION=$v" >> $env:GITHUB_ENV
+          "NUMERIC_VERSION=$num" >> $env:GITHUB_ENV
+      - name: Test
+        run: dotnet test windows/tests/MeetingAssistant.Core.Tests -c Release
+      - name: Publish (self-contained, win-x64)
+        run: >
+          dotnet publish windows/src/MeetingAssistant.App -c Release -r win-x64 --self-contained true
+          -p:Version=$env:NUMERIC_VERSION -p:InformationalVersion=$env:VERSION -o windows/publish
+      - name: Installer
+        run: |
+          choco install innosetup --no-progress -y
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DAppVersion=$env:VERSION `
+            /DSourceDir="$pwd\windows\publish" /DOutputDir="$pwd\windows\dist" windows\installer\MeetingAssistant.iss
+      - name: Portable zip
+        run: Compress-Archive -Path windows/publish/* -DestinationPath "windows/dist/MeetingAssistant-$env:VERSION-windows-x64-portable.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: windows/dist/*
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [mac, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<'EOF'
+          **Mac** (Apple Silicon, macOS 15+): download the `.dmg`, open it and drag MeetingAssistant to Applications.
+
+          **Windows** (10 version 2004 or later, x64): download and run the `-setup.exe`. The `-portable.zip` runs without installing.
+
+          First start and permissions: see [Install](https://github.com/${{ github.repository }}#install) in the README.
+          EOF
+          PRE=""; [[ "$GITHUB_REF_NAME" == *-* ]] && PRE="--prerelease"
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "MeetingAssistant ${GITHUB_REF_NAME#v}" \
+            --notes-file notes.md --generate-notes $PRE

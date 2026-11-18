@@ -35,6 +35,10 @@ command rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN/MeetingAssistant" "$APP/Contents/MacOS/"
 cp Resources/Info.plist "$APP/Contents/"
+if [[ -n "${VERSION:-}" ]]; then   # release builds: VERSION=1.2.3 (build number = commit count)
+  /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(git rev-list --count HEAD 2>/dev/null || echo 1)" "$APP/Contents/Info.plist"
+fi
 for b in "$BIN"/*.bundle; do cp -R "$b" "$APP/Contents/Resources/"; done
 CMLX="$APP/Contents/Resources/mlx-swift_Cmlx.bundle/Contents/Resources"
 mkdir -p "$CMLX" && cp "$METALLIB" "$CMLX/default.metallib"

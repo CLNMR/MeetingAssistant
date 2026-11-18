@@ -4,9 +4,9 @@ The `port-to-windows` skill keeps this file up to date.
 
 | | |
 |---|---|
-| Last ported changelog entry | 2026-11-17: Global shortcut to start or stop a meeting |
-| Spec commit ported from | 8b02924 (plus uncommitted Windows notes of 2026-11-17) |
-| Last run | 2026-11-17 |
+| Last ported changelog entry | 2026-11-18: Installable releases for Mac and Windows |
+| Spec commit ported from | uncommitted spec changes of 2026-11-18 (after 29296dd) |
+| Last run | 2026-11-18 |
 
 ## What the first run built
 
@@ -40,9 +40,14 @@ Ported "Markdown editor for the recap fields": Core `Markdown` (blocks, inline r
 - **Meeting shortcut:** `meetingHotKey` (default Ctrl+Alt+Win+R, explicit null = none), a third hook slot in `DictationService` (registered even with dictation off), the press handler in `App.Meeting.cs`, and the General shortcut row with caption and error.
 - Tests: 475 (all ported Swift cases of these entries, plus language, merge-status, naming, floating-name and preference cases).
 
+## 2026-11-18: releases
+
+The Windows side of "Installable releases" was built together with the Mac side: the Inno Setup script `windows/installer/MeetingAssistant.iss` and the `windows` job of `.github/workflows/release.yml`. A self-contained `win-x64` publish was checked on the Mac (about 220 MB, includes the sherpa-onnx and onnxruntime DLLs); the installer itself is only built on the Windows runner.
+
 ## Open items
 
 Not yet run on Windows (needs a Windows machine):
+- The release installer: install without admin rights, Start menu entry, SmartScreen prompt, update over a running app (must ask to quit, never close it), uninstall (keeps app data, removes the Run value), and the portable zip.
 - The WPF app as a whole: startup, theme in light and dark, every screen.
 - WASAPI mic capture and process loopback (call audio), device changes, privacy-blocked microphone.
 - Global hotkeys (Right Ctrl, Right Ctrl + Right Shift, AltGr layouts), paste into common apps, UI Automation reading of the focused field, muting.

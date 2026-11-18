@@ -15,6 +15,10 @@ The Windows version of MeetingAssistant, built from the specification in [`docs/
 
 Core, Speech, msctl and the tests run on Windows, macOS and Linux. The Windows projects build on macOS too (`EnableWindowsTargeting`) but only run on Windows.
 
+## Install
+
+Download the setup or the portable zip from the [Releases](https://github.com/CLNMR/MeetingAssistant/releases) page. The main [README](../README.md#windows) explains installing, SmartScreen and updating.
+
 ## Build and run
 
 Requires the .NET 10 SDK.
@@ -29,3 +33,12 @@ dotnet run --project windows/src/msctl -- help
 On first start the app downloads the speech models (about 530 MB) into `%LOCALAPPDATA%\MeetingAssistant\Models`. Set `MEETINGASSISTANT_HOME` to keep test data elsewhere.
 
 Assist and Scribe+ need the [Claude Code](https://claude.com/claude-code) CLI, logged in with a Claude subscription. The app never uses the Anthropic API.
+
+## Package a release locally
+
+```powershell
+dotnet publish windows/src/MeetingAssistant.App -c Release -r win-x64 --self-contained true -p:Version=1.2.0 -o windows/publish
+& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DAppVersion=1.2.0 /DSourceDir="$pwd\windows\publish" /DOutputDir="$pwd\windows\dist" windows\installer\MeetingAssistant.iss
+```
+
+The installer script is [`installer/MeetingAssistant.iss`](installer/MeetingAssistant.iss) ([Inno Setup 6](https://jrsoftware.org/isinfo.php)). It installs per user without administrator rights, refuses to update while MeetingAssistant is running (so a recording is never cut off), and its uninstaller keeps the app data and removes the "open at login" entry.

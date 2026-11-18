@@ -1,6 +1,6 @@
 # MeetingAssistant
 
-A native macOS app for meetings, with two modes (switch with the toolbar, ⌘1 / ⌘2):
+A native app for meetings on macOS (and, new, on Windows), with two modes (switch with the toolbar, ⌘1 / ⌘2):
 
 - **Scribe** records meetings and turns them into speaker-labelled transcripts. Everything runs locally on Apple Silicon: no cloud, no account, audio never leaves the Mac.
 - **Assist** reads the live transcript together with the meeting's context from Aya (planned meeting, template, client, project) and suggests the next question, keeps a running summary, and tracks attendees, open points and the template's checklist. It uses the local Claude Code login (your Claude subscription) and sends the transcript text, not audio, to Claude.
@@ -18,7 +18,28 @@ The app was called MeetingScribe until November 2026. It keeps the same bundle i
 
 ## Install
 
-Requirements: Apple Silicon Mac, macOS 15 or newer, Xcode 16+ command-line tools.
+Download the newest version from [Releases](https://github.com/CLNMR/MeetingAssistant/releases).
+
+### Mac
+
+Requirements: Apple Silicon Mac, macOS 15 or newer.
+
+1. Download `MeetingAssistant-<version>-mac-arm64.dmg`, open it and drag **MeetingAssistant** to **Applications**.
+2. Open it. Release builds are not notarized by Apple yet, so the first time macOS says it cannot verify the app. Click **Done**, then open **System Settings › Privacy & Security**, scroll down to the message about MeetingAssistant and click **Open Anyway**. Alternatively, run once in Terminal:
+
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/MeetingAssistant.app
+   ```
+3. To update, quit the app (not during a recording), then replace it in Applications with the new version. Because the release is not signed with a fixed developer certificate, macOS may ask for the microphone and system-audio permissions again after an update, and the Keychain may ask once more for access to the Aya key.
+
+On first launch click **Download Models** (about 1.5 GB, one time). On the first recording macOS asks for two permissions:
+
+1. **Microphone**.
+2. **System Audio Recording** (needed for Call and Hybrid mode). If you dismissed it, enable MeetingAssistant under System Settings › Privacy & Security › Screen & System Audio Recording › System Audio Recording Only.
+
+For in-person meetings, open **Settings › Voices** and record a 20-second voice sample. Dictation needs **Accessibility** permission (Settings › Dictation shows how).
+
+**Build from source** instead (needs Xcode 16+ command-line tools):
 
 ```bash
 ./scripts/build_app.sh --install     # builds, signs and copies to /Applications
@@ -26,12 +47,29 @@ Requirements: Apple Silicon Mac, macOS 15 or newer, Xcode 16+ command-line tools
 
 The script installs the Metal toolchain on first run if it is missing. Without `--install` the app is left in `build/MeetingAssistant.app`.
 
-On first launch click **Download Models** (about 1.5 GB, one time). On the first recording macOS asks for two permissions:
+### Windows
 
-1. **Microphone**.
-2. **System Audio Recording** (needed for Call and Hybrid mode). If you dismissed it, enable MeetingAssistant under System Settings › Privacy & Security › Screen & System Audio Recording › System Audio Recording Only.
+> The Windows version is new and has not been tested much on real Windows machines yet. Please report what does not work.
 
-For in-person meetings, open **Settings › Voices** and record a 20-second voice sample.
+Requirements: Windows 10 version 2004 or newer, or Windows 11, on a 64-bit Intel/AMD PC. No .NET installation is needed.
+
+1. Download `MeetingAssistant-<version>-windows-x64-setup.exe` and run it. It installs for your user only (no administrator rights) into `%LOCALAPPDATA%\Programs\MeetingAssistant` and adds a Start menu entry.
+2. The installer is not code-signed yet, so Windows SmartScreen may show "Windows protected your PC". Click **More info**, then **Run anyway**.
+3. To update, quit MeetingAssistant from the tray icon (not during a recording) and run the new setup. Uninstall it in Settings › Apps; your recordings and settings in `%LOCALAPPDATA%\MeetingAssistant` are kept.
+
+If you cannot install programs, use `MeetingAssistant-<version>-windows-x64-portable.zip`: unzip it anywhere and start `MeetingAssistant.exe`.
+
+On first start the app downloads the speech models (about 530 MB). Recording needs microphone access for desktop apps: Settings › Privacy & security › Microphone › **Let desktop apps access your microphone**. The Windows version transcribes on the CPU, so the final transcript takes longer than on a Mac. Details and building from source: [windows/README.md](windows/README.md).
+
+### Assist and Scribe+ on both platforms
+
+Assist and Scribe+ use [Claude Code](https://claude.com/code) with your Claude subscription. Install it and run `claude` once in a terminal to log in (see [Assist](#assist) below). Scribe, the live transcript and word-for-word dictation work without it.
+
+### Making a release
+
+Push a version tag: `git tag v1.2.0 && git push origin v1.2.0`. The [Release workflow](.github/workflows/release.yml) builds the Mac DMG and the Windows installer and portable zip and publishes them as a GitHub release (tags with a `-`, like `v1.2.0-beta.1`, become pre-releases). *Run workflow* on the Actions tab builds the same files without publishing them.
+
+Optional repository secrets remove the first-start warnings on the Mac: `MACOS_CERT_P12` (a base64 "Developer ID Application" certificate) and `MACOS_CERT_PASSWORD` sign the app, and `NOTARY_APPLE_ID`, `NOTARY_PASSWORD` (an app-specific password) and `NOTARY_TEAM_ID` notarize the DMG. Both need a paid Apple Developer account. The Windows installer is unsigned.
 
 ## Using it
 
