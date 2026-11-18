@@ -552,8 +552,12 @@ public sealed class SessionFileTests : IDisposable
         var json = store.Get(SettingsStore.PreferencesKey)!.AsObject();
         Assert.True(json.ContainsKey("dictationHotKey"));              // written as null
         Assert.Null(json["dictationHotKey"]);
-        Assert.Equal(17, json.Count);
+        Assert.Equal(18, json.Count);
         Assert.True(reread.HideFromScreenSharing);                     // on by default
+        Assert.True(reread.SpeechOnGpu);                               // graphics card by default (Windows only)
+        Assert.True(json["speechOnGpu"]!.GetValue<bool>());
+        Assert.False(Preferences.FromJson(JsonNode.Parse("""{"speechOnGpu":false}""")).SpeechOnGpu);
+        Assert.True(Preferences.FromJson(JsonNode.Parse("""{"speechOnGpu":"no"}""")).SpeechOnGpu);
         Assert.False(Preferences.FromJson(JsonNode.Parse("""{"hideFromScreenSharing":false}""")).HideFromScreenSharing);
 
         // Meeting shortcut: default Ctrl+Alt+Win+R, explicit null = none, independent of dictation.

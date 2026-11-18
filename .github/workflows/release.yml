@@ -66,7 +66,8 @@ jobs:
 
   windows:
     runs-on: windows-latest
-    timeout-minutes: 30
+    # Building sherpa-onnx with DirectML takes most of this; later runs restore it from the cache.
+    timeout-minutes: 120
     defaults:
       run:
         shell: pwsh
@@ -83,12 +84,51 @@ jobs:
           $num = ($v -split '-')[0]
           "VERSION=$v" >> $env:GITHUB_ENV
           "NUMERIC_VERSION=$num" >> $env:GITHUB_ENV
+      - name: sherpa-onnx version
+        run: |
+          $csproj = [xml](Get-Content windows/src/MeetingAssistant.Speech/MeetingAssistant.Speech.csproj)
+          $v = ($csproj.Project.ItemGroup.PackageReference | Where-Object Include -eq 'org.k2fsa.sherpa.onnx').Version
+          if (-not $v) { throw 'org.k2fsa.sherpa.onnx not found in MeetingAssistant.Speech.csproj' }
+          "SHERPA_VERSION=$v" >> $env:GITHUB_ENV
+      # MSVC environment: dumpbin for the checks (cmake uses the Visual Studio generator itself).
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      # sherpa-onnx DLLs with the DirectML execution provider (the NuGet ones are CPU-only).
+      - uses: actions/cache@v4
+        id: directml
+        with:
+          path: windows/native/directml
+          key: directml-${{ runner.os }}-sherpa-${{ env.SHERPA_VERSION }}-${{ hashFiles('windows/native/build-directml.ps1') }}
+      - name: Build sherpa-onnx with DirectML
+        if: steps.directml.outputs.cache-hit != 'true'
+        run: ./windows/native/build-directml.ps1 -SherpaVersion $env:SHERPA_VERSION -OutDir windows/native/directml
       - name: Test
         run: dotnet test windows/tests/MeetingAssistant.Core.Tests -c Release
       - name: Publish (self-contained, win-x64)
         run: >
           dotnet publish windows/src/MeetingAssistant.App -c Release -r win-x64 --self-contained true
           -p:Version=$env:NUMERIC_VERSION -p:InformationalVersion=$env:VERSION -o windows/publish
+      - name: Use the DirectML DLLs
+        run: Copy-Item windows/native/directml/*.dll windows/publish -Force
+      - name: Check the DirectML DLLs
+        run: |
+          $pub = 'windows/publish'
+          foreach ($name in 'DirectML.dll', 'onnxruntime.dll', 'sherpa-onnx-c-api.dll') {
+            if (-not (Test-Path "$pub/$name")) { throw "$name is missing in the publish folder" }
+            $a = (Get-FileHash "$pub/$name").Hash; $b = (Get-FileHash "windows/native/directml/$name").Hash
+            if ($a -ne $b) { throw "$name in the publish folder is not the DirectML build" }
+          }
+          function Has([string]$file, [string]$text) { [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($file)).Contains($text) }
+          if (-not (Has "$pub/onnxruntime.dll" 'OrtSessionOptionsAppendExecutionProvider_DML')) { throw 'onnxruntime.dll has no DirectML provider' }
+          $sherpa = Get-ChildItem windows/native/directml/*.dll | Where-Object Name -notin 'onnxruntime.dll', 'DirectML.dll'
+          if (-not ($sherpa | Where-Object { Has $_.FullName 'Failed to enable DirectML' })) { throw 'sherpa-onnx was built without DirectML' }
+          # Imports of the sherpa-onnx C API must resolve inside the app folder or Windows.
+          $deps = dumpbin /nologo /dependents "$pub/sherpa-onnx-c-api.dll" | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^[\w.\-]+\.dll$' }
+          foreach ($d in $deps) {
+            if (-not ((Test-Path "$pub/$d") -or (Test-Path "$env:SystemRoot/System32/$d") -or $d -like 'api-ms-win-*')) { throw "sherpa-onnx-c-api.dll needs $d" }
+          }
+          Get-Content windows/native/directml/versions.txt
       - name: Installer
         run: |
           choco install innosetup --no-progress -y

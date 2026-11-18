@@ -342,9 +342,12 @@ struct SessionDetailView: View {
 
     private func edit(_ change: (inout Transcript) -> Void) {
         guard var t = transcript else { return }
+        let before = t
         change(&t)
         transcript = t
         try? SessionStore.saveTranscript(t, id: info.id)
+        // A speaker named or merged here also changes the Assist recap of this meeting.
+        state.assist.speakersChanged(info.id, before: before, after: t)
     }
 
     private func rename(_ s: Speaker, to name: String) {

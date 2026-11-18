@@ -15,11 +15,11 @@ struct ContentView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .alert("Open MeetingAssistant at login?", isPresented: $askLaunchAtLogin) {
-                Button("Open at Login") { state.launchAtLogin.answer(true) }
+            .alert("Open MeetingAssistant at startup?", isPresented: $askLaunchAtLogin) {
+                Button("Open at Startup") { state.launchAtLogin.answer(true) }
                 Button("Not Now", role: .cancel) { state.launchAtLogin.answer(false) }
             } message: {
-                Text("Dictation, the menu-bar menu and recording shortcuts are then ready right after you log in. You can change this later in Settings › General.")
+                Text("Dictation, the menu-bar menu and recording shortcuts are then ready right after you start your computer. You can change this later in Settings › General.")
             }
         }
         .onAppear { if LaunchAtLogin.shouldAsk { askLaunchAtLogin = true } }

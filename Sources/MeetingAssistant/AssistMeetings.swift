@@ -105,16 +105,17 @@ extension AssistController {
 
     /// Gives the final transcript's speakers the names they had during the meeting (once).
     func carrySpeakerNames(_ id: String) {
-        guard recordID == id else { return }
-        reviewTranscript = SessionStore.transcript(id)
-        guard var rec = record, rec.speakersCarried != true else { return }
-        defer { rec.speakersCarried = true; try? rec.save(id); record = rec }
-        guard var t = SessionStore.transcript(id) else { return }
+        let t0 = SessionStore.transcript(id)
+        if isOpen(id) { reviewTranscript = t0 }
+        guard let rec = isOpen(id) ? record : AssistRecord.load(id), rec.speakersCarried != true else { return }
+        defer { updateRecord(id) { $0.speakersCarried = true } }
+        guard let before = t0 else { return }
+        var t = before
         let names = SpeakerNames.carryOver(transcript: t, lines: rec.lines, attendees: rec.state.attendees)
-        guard !names.isEmpty else { reviewTranscript = t; return }
+        guard !names.isEmpty else { return }
         for i in t.speakers.indices { if let n = names[t.speakers[i].id] { t.speakers[i].label = n } }
         try? SessionStore.saveTranscript(t, id: id)
-        reviewTranscript = t
+        speakersChanged(id, before: before, after: t)
     }
 
     /// Names a speaker of the final transcript; the recap draft follows.
@@ -122,24 +123,22 @@ extension AssistController {
         let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let id = recordID, !n.isEmpty, var t = SessionStore.transcript(id),
               let i = t.speakers.firstIndex(where: { $0.id == speakerID }) else { return }
-        let old = t.speakers[i].label
-        guard old != n else { return }
+        let before = t
+        guard t.speakers[i].label != n else { return }
         t.speakers[i].label = n
         try? SessionStore.saveTranscript(t, id: id)
-        reviewTranscript = t
         if let e = t.speakers[i].embedding, !t.speakers[i].isMe {
             var lib = SpeakerLibrary.load()
             lib.learn(name: n, embedding: e)
             try? lib.save()
         }
-        if SpeakerNames.isGeneric(old) {
-            recapFields = recapFields.map { f in var f = f; f.value = SpeakerNames.replacing(old, with: n, in: f.value); return f }
-        }
+        speakersChanged(id, before: before, after: t)
     }
 
     // MARK: - Past meetings
 
     func deleteMeeting(_ id: String) {
+        cancelWait(id)
         if recordID == id { finishReview() }
         app.delete(id)
     }

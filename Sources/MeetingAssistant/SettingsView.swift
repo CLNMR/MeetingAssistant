@@ -63,7 +63,7 @@ private struct LaunchAtLoginToggle: View {
     @ObservedObject var login: LaunchAtLogin
 
     var body: some View {
-        Toggle("Open MeetingAssistant at login", isOn: Binding(get: { login.isEnabled || login.needsApproval },
+        Toggle("Open MeetingAssistant at startup", isOn: Binding(get: { login.isEnabled || login.needsApproval },
                                                                 set: { login.set($0) }))
             .disabled(!LaunchAtLogin.isAvailable)
             .onAppear { login.refresh() }

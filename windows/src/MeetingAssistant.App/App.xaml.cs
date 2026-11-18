@@ -11,7 +11,8 @@ namespace MeetingAssistant.App;
 
 /// App startup and window management: single instance, app data folder, theme, main window,
 /// notification-area icon, Settings, the floating transcript (reopened if it was open at quit) and the
-/// dictation HUD. Launch argument `-select <sessionId>` opens that session (spec 01).
+/// dictation HUD. Launch argument `-select <sessionId>` opens that session (spec 01); `-gpuProbe` runs
+/// only the graphics-card check and exits (see <see cref="Services.SpeechGpu"/>).
 public partial class App : Application, IWindowService
 {
     SingleInstance? _single;
@@ -36,6 +37,12 @@ public partial class App : Application, IWindowService
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        // Graphics-card check (child process of SpeechGpu): no window, no single-instance check; exits.
+        if (e.Args.Contains(Speech.SpeechAcceleration.ProbeArgument))
+        {
+            Environment.Exit(Speech.SpeechEngine.RunGpuProbe(Console.Out, Console.Error));
+            return;
+        }
         base.OnStartup(e);
         _single = new SingleInstance();
         if (!_single.IsFirst)

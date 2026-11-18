@@ -36,7 +36,7 @@ final class LaunchAtLogin: ObservableObject {
         do {
             if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
         } catch {
-            self.error = "Could not \(on ? "turn on" : "turn off") opening at login: \(error.localizedDescription)"
+            self.error = "Could not \(on ? "turn on" : "turn off") opening at startup: \(error.localizedDescription)"
         }
         refresh()
     }

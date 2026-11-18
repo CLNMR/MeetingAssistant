@@ -301,7 +301,7 @@ The app always queues an Assist recording for final transcription, whatever the 
 
 The Review opens after Stop. It also opens from the Meetings panel, from Import, and from the "Assist Recap" button in Scribe's session detail (that button is disabled while an Assist meeting is running). Opening it always switches the app to Assist mode.
 
-**Open review(id):** cancel any pending wait and flush the unsaved recap draft of the previous review. Then load the Assist record. If there is none, do nothing. Then set:
+**Open review(id):** flush the unsaved recap draft of the previous review (its wait for the transcript keeps running, see below). Then load the Assist record. If there is none, do nothing. Then set:
 - state and context from the record;
 - the recap fields from the saved **draft**;
 - the transcript from disk;
@@ -311,9 +311,21 @@ The Review opens after Stop. It also opens from the Meetings panel, from Import,
 
 Then switch the phase to Review, load the day's Aya meetings and the target record, and start **wait-then-draft**.
 
-**Wait-then-draft:** poll every 1 s while the session is queued, transcribing or recording. The recap StepLine meanwhile reads "Waiting for the final transcript… NN %". Then **carry speaker names** (once per record): map the live speaker names onto the final transcript's speakers and save. Then, if the draft is empty:
-- If not uploaded yet, **draft the recap** and (if the tables were never completed and tables exist) **complete the tables**, both in parallel.
-- If already uploaded: "Already saved in Aya. Draft again to change it."
+**Steps that run while another meeting is opened.** Drafting the recap, completing the tables, proposing CRM updates, saving the recap to Aya and applying CRM updates take seconds (Claude or Aya). Each step belongs to the meeting it was started for and keeps running when another meeting is opened (opening another meeting cancels only the *wait* for the transcript, never a running step). Its result always goes to that meeting:
+- If that meeting is still open, the result is shown as usual.
+- Otherwise it is written to that meeting's Assist record on disk (read fresh, so steps finishing one after another do not overwrite each other): the recap draft, the completed tables, the upload result (`recapRecordID`, `recapUploadedAt`, the draft that was saved), the created contacts and `crmAppliedAt`. Errors are dropped. A CRM proposal (never saved to disk) is kept in memory and shown when that meeting is opened again in the same app run.
+- The values a step sends (recap fields, tables, target meeting) are taken when it starts.
+- Opening a meeting whose step is still running shows that step's StepLine as working ("Claude is writing the recap…", "Saving in Aya…", "Claude is completing the tables…", "Claude is reading the CRM records and the transcript…", "Writing to Aya…"). A step that is already running for a meeting is not started a second time (wait-then-draft does not start a second draft).
+- The day's Aya meetings are only applied if their meeting is still open.
+
+*Mac implementation:* `AssistController.reviewJobs` (per session: recap, tables, crm, upload, applyCRM), `isOpen(id)`, `updateRecord(id, change)`, `pendingCRM`.
+
+**Wait-then-draft** runs **per meeting in the background**: at most one per meeting; it is not cancelled when another meeting is opened, the review is closed with Done, or a new meeting starts (only deleting the meeting stops it). So a meeting stopped while its final transcript was still being made gets its recap drafted when the transcript is ready, even if the user moved on. Poll every 1 s while the session is queued, transcribing or recording; while that meeting is open, the recap StepLine reads "Waiting for the final transcript… NN %". Then **carry speaker names** (once per record): map the live speaker names onto the final transcript's speakers and save (the recap follows, see *Speaker names in the recap*). Then, if the meeting's draft is empty (the open review's fields, else the saved draft) and no draft is running for it:
+- If not uploaded yet, **draft the recap** and (if the tables were never completed and tables exist) **complete the tables**, both in parallel, for that meeting (the meeting's record is read from disk when it is not open).
+- If already uploaded and the meeting is open: "Already saved in Aya. Draft again to change it."
+- Otherwise a leftover "Waiting for the final transcript…" StepLine of the open meeting is cleared.
+
+**Speaker names in the recap.** Whenever a meeting's final transcript changes — a speaker renamed or merged in the review or in Scribe, marked as me, or names carried over from the live meeting — the renames are computed between the old and new transcript: every speaker whose label was generic ("Speaker 2", "Them …") and now has another label, and every generic speaker that was merged into another (the label of the speaker whose turns now cover most of its speaking time). Each rename is replaced in all recap field values (whole words, any capitalization; "Speaker N" also matches "Sprecher N" and "Sprecherin N"): in the open review's fields, else in the meeting's saved draft. A recap draft that finishes also applies the renames made since it started (it was written from the transcript of that moment).
 
 **Layout:** padding 20 on the backdrop. The PageHeader is fixed at the top. Below it is a vertical scroll with the content max 920 px wide, centred, sections 12 px apart. Each section is a card with 18 px padding.
 
@@ -336,7 +348,7 @@ Title "Speakers" (16 pt semibold), subtitle "Names are used in the transcript an
   - the name button (13 pt semibold, min 140 px; muted when generic) with a pencil icon. It is disabled for "Me". Clicking opens the Person popover (right) with rename;
   - the longest utterance as a quote, truncated at 110 characters with "…" (12 pt muted, 1 line);
   - right-aligned total talk time `clock(t)`.
-- **Rename (final transcript):** set the speaker's label and save the transcript. If the speaker has a voice embedding and is not me, teach the speaker library this name (future auto-recognition). If the old name was generic, replace it with the new name in all recap field values.
+- **Rename (final transcript):** set the speaker's label and save the transcript. If the speaker has a voice embedding and is not me, teach the speaker library this name (future auto-recognition). The recap follows (*Speaker names in the recap*, §8).
 
 #### 8.2 Meeting recap
 Header: the title "Meeting recap" and the subtitle "→ <meetings list label> in <workspace label>". On the right:

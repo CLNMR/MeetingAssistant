@@ -5,7 +5,7 @@ using MeetingAssistant.Core.Assist;
 namespace MeetingAssistant.App;
 
 /// The global meeting shortcut (spec 04 §3.4, default Ctrl+Alt+Win+R) and the first-open question
-/// "Open MeetingAssistant at login?" (spec 04 §3.5).
+/// "Open MeetingAssistant at startup?" (spec 04 §3.5).
 public partial class App
 {
     bool _meetingShortcutBusy;
@@ -51,7 +51,7 @@ public partial class App
     {
         if (!LaunchAtLogin.ShouldAsk(args)) return;
         var choice = ShowConfirm(LaunchAtLogin.Question, LaunchAtLogin.QuestionMessage,
-            new AlertButton("Open at Login", AlertButtonKind.Primary, IsDefault: true),
+            new AlertButton("Open at Startup", AlertButtonKind.Primary, IsDefault: true),
             new AlertButton("Not Now", IsCancel: true));
         LaunchAtLogin.Shared.Answer(choice == 0);
     }

@@ -63,6 +63,53 @@ public class SpeakersTests
         Assert.Equal("Erika und Speaker 12 sprachen.", SpeakerNames.Replacing("Speaker 1", "Erika", "Speaker 1 und Speaker 12 sprachen."));
 
     [Fact]
+    public void ReplacesGermanAndLowercaseForms()
+    {
+        Assert.Equal("Max fragt, Max nickt, Max geht; Sprecher 21 bleibt.",
+            SpeakerNames.Replacing("Speaker 2", "Max", "Sprecher 2 fragt, Sprecherin 2 nickt, speaker 2 geht; Sprecher 21 bleibt."));
+        Assert.Equal("Max sagt", SpeakerNames.Replacing("Them (?)", "Max", "them (?) sagt"));
+    }
+
+    [Fact]
+    public void RenamesBetweenTranscriptVersions()
+    {
+        var before = new Transcript
+        {
+            Turns = { T(0, "a", 0, 5, "eins zwei"), T(1, "b", 5, 9, "drei vier fünf"), T(2, "c", 9, 12, "sechs") },
+            Speakers = { Sp("a", "Speaker 1"), Sp("b", "Speaker 2"), Sp("c", "Max Beispiel") },
+            Engine = "test", CreatedAt = DateTime.UtcNow,
+        };
+        var after = before.Clone();
+        after.Speakers[0].Label = "Erika Musterfrau";            // renamed
+        after.Turns[1].Speaker = "c";                            // Speaker 2 merged into Max Beispiel
+        after.Speakers.RemoveAt(1);
+        var r = SpeakerNames.Renames(before, after);
+        Assert.Equal(new[] { "Speaker 1", "Speaker 2" }, r.Select(x => x.Old));
+        Assert.Equal(new[] { "Erika Musterfrau", "Max Beispiel" }, r.Select(x => x.New));
+        var fields = new List<ProposedValue>
+        {
+            new() { Key = "summary__value", Label = "Summary", Kind = AyaFieldKind.Markdown, Value = "Speaker 1 stellt vor, Sprecher 2 fragt.", Include = true },
+        };
+        Assert.Equal("Erika Musterfrau stellt vor, Max Beispiel fragt.", SpeakerNames.Applying(r, fields)[0].Value);
+        Assert.Empty(SpeakerNames.Renames(before, before));
+    }
+
+    [Fact]
+    public void MergedSpeakerFollowedByTimeWhenTurnsAreJoined()
+    {
+        var before = new Transcript
+        {
+            Turns = { T(0, "c", 0, 4, "eins zwei"), T(1, "b", 4.5, 8, "drei vier"), T(2, "a", 9, 12, "fünf") },
+            Speakers = { Sp("a", "Speaker 1"), Sp("b", "Speaker 2"), Sp("c", "Max Beispiel") },
+            Engine = "test", CreatedAt = DateTime.UtcNow,
+        };
+        var after = before.Clone();
+        after.Merge("b", "c");                                   // joins turns 0 and 1 and renumbers
+        var r = Assert.Single(SpeakerNames.Renames(before, after));
+        Assert.Equal(("Speaker 2", "Max Beispiel"), r);
+    }
+
+    [Fact]
     public void ImportantPersonFields()
     {
         var d = new List<LabeledValue>

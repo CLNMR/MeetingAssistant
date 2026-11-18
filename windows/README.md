@@ -34,10 +34,22 @@ On first start the app downloads the speech models (about 530 MB) into `%LOCALAP
 
 Assist and Scribe+ need the [Claude Code](https://claude.com/claude-code) CLI, logged in with a Claude subscription. The app never uses the Anthropic API.
 
+## Graphics card (DirectML)
+
+The app runs Parakeet, CAM++ and the pyannote segmentation on the graphics card through DirectML when Settings › Models › *Use the graphics card for transcription* is on (default), and on the processor otherwise. The `org.k2fsa.sherpa.onnx` NuGet package ships CPU-only DLLs, so `dotnet build`/`dotnet run` always use the processor (Settings shows "Running on the processor: this build has no DirectML support."). Releases replace those DLLs with a DirectML build:
+
+```powershell
+pwsh windows/native/build-directml.ps1            # → windows/native/directml/*.dll (about 20–40 minutes)
+Copy-Item windows/native/directml/*.dll windows/publish -Force   # after dotnet publish
+```
+
+[`native/build-directml.ps1`](native/build-directml.ps1) clones sherpa-onnx at the tag of the NuGet version (`-SherpaVersion`, default 2.0.1), downloads `Microsoft.ML.OnnxRuntime.DirectML` (`-OnnxRuntimeVersion`, default 1.24.4) and `Microsoft.AI.DirectML` (`-DirectMLVersion`, default 1.15.4) from nuget.org, points sherpa-onnx's `cmake/onnxruntime-win-x64-directml.cmake` at them (URL and SHA-256), builds with `-DSHERPA_ONNX_ENABLE_DIRECTML=ON -DBUILD_SHARED_LIBS=ON` (C API, TTS and diarization on, binaries, PortAudio, websocket, Python and tests off) and collects every DLL into `windows/native/directml`. It checks that ONNX Runtime has the DirectML provider, that sherpa-onnx was compiled with it, and (with `dumpbin` on the PATH, i.e. in a Developer PowerShell) that every DLL import resolves. Needs Windows x64, Git, CMake and Visual Studio 2022 or later (Build Tools) with the C++ workload and a Windows SDK. When the NuGet version of sherpa-onnx changes, the release workflow rebuilds the DLLs for it (its cache key contains the version and the script's hash).
+
 ## Package a release locally
 
 ```powershell
 dotnet publish windows/src/MeetingAssistant.App -c Release -r win-x64 --self-contained true -p:Version=1.2.0 -o windows/publish
+Copy-Item windows/native/directml/*.dll windows/publish -Force     # optional: graphics card support (see above)
 & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DAppVersion=1.2.0 /DSourceDir="$pwd\windows\publish" /DOutputDir="$pwd\windows\dist" windows\installer\MeetingAssistant.iss
 ```
 

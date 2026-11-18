@@ -19,6 +19,21 @@ public sealed class SpeechEngine : IDisposable
     /// Threads per model (sherpa-onnx CPU inference).
     public static int Threads { get; set; } = Math.Clamp(Environment.ProcessorCount / 2, 2, 8);
 
+    /// Decides the provider (CPU or DirectML) of Parakeet, CAM++ and the diarizers right before one of
+    /// them loads (the app: setting + graphics-card check, see <see cref="SpeechAcceleration"/>).
+    /// Null = CPU (msctl, tests). Silero VAD always runs on the CPU.
+    public static Func<SpeechProviderChoice>? ProviderSource { get; set; }
+
+    readonly SpeechProviderChoice? _provider;
+
+    /// An engine whose models use <paramref name="provider"/> (the graphics-card check); by default
+    /// each model asks <see cref="ProviderSource"/> when it loads.
+    public SpeechEngine(SpeechProviderChoice? provider = null) => _provider = provider;
+
+    static SpeechProviderChoice CurrentProvider() => ProviderSource?.Invoke() ?? SpeechProviderChoice.Cpu();
+
+    SpeechProviderChoice Provider() => _provider ?? CurrentProvider();
+
     /// Distance threshold of sherpa-onnx's agglomerative clustering in offline diarization.
     /// Lower = more clusters; the pipeline then merges same-voice clusters (cosine ≥ 0.80).
     public static float DiarizationClusterThreshold { get; set; } = 1.1f;
@@ -35,6 +50,7 @@ public sealed class SpeechEngine : IDisposable
             if (_parakeet is not null) return _parakeet;
             var m = ModelCatalog.Parakeet;
             Require(m);
+            var p = Provider();
             var config = new OfflineRecognizerConfig();
             config.FeatConfig.SampleRate = 16_000;
             config.FeatConfig.FeatureDim = 80;   // sherpa-onnx reads the real value from the NeMo model
@@ -43,8 +59,8 @@ public sealed class SpeechEngine : IDisposable
             config.ModelConfig.Transducer.Joiner = m.File("joiner.int8.onnx");
             config.ModelConfig.Tokens = m.File("tokens.txt");
             config.ModelConfig.ModelType = "nemo_transducer";
-            config.ModelConfig.NumThreads = Threads;
-            config.ModelConfig.Provider = "cpu";
+            config.ModelConfig.NumThreads = p.NumThreads;
+            config.ModelConfig.Provider = p.Provider;
             config.DecodingMethod = "greedy_search";
             return _parakeet = new OfflineRecognizer(config);
         }
@@ -56,9 +72,10 @@ public sealed class SpeechEngine : IDisposable
         {
             if (_embedder is not null) return _embedder;
             Require(ModelCatalog.CampPlus);
+            var p = Provider();
             var c = new SpeakerEmbeddingExtractorConfig
             {
-                Model = ModelCatalog.CampPlus.File("campplus.onnx"), NumThreads = Threads, Provider = "cpu",
+                Model = ModelCatalog.CampPlus.File("campplus.onnx"), NumThreads = p.NumThreads, Provider = p.Provider,
             };
             return _embedder = new SpeakerEmbeddingExtractor(c);
         }
@@ -66,22 +83,24 @@ public sealed class SpeechEngine : IDisposable
 
     OfflineSpeakerDiarization Diarizer()
     {
-        lock (_loadLock) return _diarizer ??= CreateDiarizer();
+        lock (_loadLock) return _diarizer ??= CreateDiarizer(provider: _provider);
     }
 
     /// A new offline diarizer: pyannote segmentation 3.0 + CAM++ with agglomerative clustering
     /// (`DiarizationClusterThreshold`), minimum segment 0.25 s. The live window diarizer owns its own.
-    public static OfflineSpeakerDiarization CreateDiarizer(float? clusterThreshold = null)
+    /// Segmentation and embedding use <paramref name="provider"/>, by default <see cref="ProviderSource"/>.
+    public static OfflineSpeakerDiarization CreateDiarizer(float? clusterThreshold = null, SpeechProviderChoice? provider = null)
     {
         Require(ModelCatalog.Segmentation);
         Require(ModelCatalog.CampPlus);
+        var p = provider ?? CurrentProvider();
         var c = new OfflineSpeakerDiarizationConfig();
         c.Segmentation.Pyannote.Model = ModelCatalog.Segmentation.File("model.onnx");
-        c.Segmentation.NumThreads = Threads;
-        c.Segmentation.Provider = "cpu";
+        c.Segmentation.NumThreads = p.NumThreads;
+        c.Segmentation.Provider = p.Provider;
         c.Embedding.Model = ModelCatalog.CampPlus.File("campplus.onnx");
-        c.Embedding.NumThreads = Threads;
-        c.Embedding.Provider = "cpu";
+        c.Embedding.NumThreads = p.NumThreads;
+        c.Embedding.Provider = p.Provider;
         c.Clustering.NumClusters = -1;
         c.Clustering.Threshold = clusterThreshold ?? DiarizationClusterThreshold;
         c.MinDurationOn = 0.25f;
@@ -248,6 +267,61 @@ public sealed class SpeechEngine : IDisposable
             }
             return segs.Select(s => (s.Speaker, new TimeRange(s.Start, s.End))).ToList();
         }
+    }
+
+    // MARK: Graphics-card check
+
+    /// The child process of the graphics-card check (`-gpuProbe`, see <see cref="SpeechAcceleration"/>):
+    /// loads CAM++, pyannote segmentation and Parakeet with DirectML, runs each once on 2 s of
+    /// synthetic speech-like audio and prints <see cref="SpeechAcceleration.OkMarker"/>. sherpa-onnx
+    /// reports a provider it could not use on stderr; the parent reads that. Returns the exit code.
+    public static int RunGpuProbe(TextWriter output, TextWriter error)
+    {
+        try
+        {
+            foreach (var m in new[] { ModelCatalog.CampPlus, ModelCatalog.Segmentation, ModelCatalog.Parakeet }) Require(m);
+            var audio = ProbeAudio(2.0);
+            using var engine = new SpeechEngine(SpeechProviderChoice.Gpu());
+            if (engine.Embedding(audio).Length == 0) { error.WriteLine("gpu probe: no embedding"); return 2; }
+            using (var d = CreateDiarizer(provider: SpeechProviderChoice.Gpu())) d.Process(audio);
+            engine.Recognize(audio);
+            // sherpa-onnx falls back to the CPU silently when DirectML cannot be set up (only a line
+            // on stderr, which a windowless process may not deliver), so also require that ONNX
+            // Runtime actually loaded DirectML.dll into this process.
+            if (OperatingSystem.IsWindows() && !System.Diagnostics.Process.GetCurrentProcess().Modules
+                    .Cast<System.Diagnostics.ProcessModule>()
+                    .Any(m => string.Equals(m.ModuleName, "DirectML.dll", StringComparison.OrdinalIgnoreCase)))
+            {
+                error.WriteLine("gpu probe: DirectML.dll was not loaded (Fallback to cpu)");
+                error.Flush();
+                return 3;
+            }
+            output.WriteLine(SpeechAcceleration.OkMarker);
+            output.Flush();
+            return 0;
+        }
+        catch (Exception e)
+        {
+            error.WriteLine($"gpu probe: {e.GetType().Name}: {e.Message}");
+            error.Flush();
+            return 1;
+        }
+    }
+
+    /// Speech-like test audio: a 120 Hz voice with harmonics, syllable-rate amplitude changes.
+    internal static float[] ProbeAudio(double seconds)
+    {
+        var a = new float[(int)(seconds * 16_000)];
+        for (int i = 0; i < a.Length; i++)
+        {
+            double t = i / 16_000.0;
+            double f0 = 120 + 20 * Math.Sin(2 * Math.PI * 0.7 * t);
+            double voice = 0;
+            for (int h = 1; h <= 8; h++) voice += Math.Sin(2 * Math.PI * f0 * h * t) / h;
+            double envelope = 0.5 + 0.5 * Math.Sin(2 * Math.PI * 4 * t);
+            a[i] = (float)(0.08 * voice * envelope);
+        }
+        return a;
     }
 
     // MARK: Helpers

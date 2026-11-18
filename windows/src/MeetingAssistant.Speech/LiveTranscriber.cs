@@ -24,7 +24,7 @@ public sealed class LiveTranscriber
     {
         public required Track Track;
         public required StreamingVad Vad;
-        public ILiveDiarizer? Diarizer;
+        public volatile ILiveDiarizer? Diarizer;   // set by the track's worker before its first samples
         public readonly LiveGain Gain = new();
         public float[] Pending = Array.Empty<float>();
         public long Position;                 // samples consumed by VAD so far
@@ -66,7 +66,8 @@ public sealed class LiveTranscriber
     /// Diarized tracks: Call and Hybrid both, In person the mic.
     bool Diarizes(Track t) => _mode != MeetingMode.InPerson || t == Track.Mic;
 
-    /// Create the per-track streams and load Parakeet. Feed audio after this.
+    /// Create the per-track streams and load Parakeet. Feed audio after this. Models load on the
+    /// workers, not on the caller's (UI) thread: the first load may wait for the graphics-card check.
     public void Start(IEnumerable<Track> tracks)
     {
         foreach (var t in tracks)
@@ -77,18 +78,23 @@ public sealed class LiveTranscriber
                 Vad = new StreamingVad(),
                 Input = Channel.CreateUnbounded<float[]>(new UnboundedChannelOptions { SingleReader = true }),
             };
-            if (Diarizes(t))
-            {
-                try { s.Diarizer = DiarizerFactory(_engine); }
-                catch (Exception e) { Debug.WriteLine($"live diarizer unavailable: {e.Message}"); }
-            }
             _streams[t] = s;
+            bool diarize = Diarizes(t);
             s.Worker = Task.Run(async () =>
             {
+                // Before any samples are processed, so the diarizer sees the whole track and no word exists without it.
+                if (diarize)
+                {
+                    try { s.Diarizer = DiarizerFactory(_engine); }
+                    catch (Exception e) { Debug.WriteLine($"live diarizer unavailable: {e.Message}"); }
+                }
                 await foreach (var samples in s.Input.Reader.ReadAllAsync()) Process(s, samples);
             });
         }
-        try { _engine.Preload(); } catch (Exception e) { Debug.WriteLine($"parakeet: {e.Message}"); }
+        _ = Task.Run(() =>
+        {
+            try { _engine.Preload(); } catch (Exception e) { Debug.WriteLine($"parakeet: {e.Message}"); }
+        });
     }
 
     /// Thread-safe entry point for capture callbacks: 16 kHz mono samples of one track.

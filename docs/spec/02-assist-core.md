@@ -514,7 +514,9 @@ Attendees start empty. They come only from Claude and from speaker renames.
 #### 5.2 `SpeakerNames` helpers
 - **isGeneric(name):** true for the labels the app makes up: empty, `?`, `…`, anything starting with `Them`, and `Speaker <integer>`.
 - **resolved(label, attendees):** a non-generic label is returned unchanged. Otherwise the name of the first attendee whose `speaker == label` and whose own name is not generic; failing that, the label.
-- **replacing(old, new, text):** replaces whole-word occurrences only. The pattern is `(?<![\p{L}\p{N}])<escaped old>(?![\p{L}\p{N}])`. It is used when a final-transcript speaker is renamed from a generic label: the recap draft field values follow the new name.
+- **replacing(old, new, text):** replaces whole-word occurrences only, case-insensitively. The pattern is `(?<![\p{L}\p{N}])<core>(?![\p{L}\p{N}])`, where `<core>` is the escaped old label, or `(?:Speaker|Sprecher(?:in)?) N` when the old label is "Speaker N". It is used when a final-transcript speaker gets a name: the recap draft field values follow (03 §8, *Speaker names in the recap*).
+- **renames(before, after):** for each speaker of `before` with a generic label: its label in `after` if it changed, or, if the speaker is gone (merged), the label of the speaker whose turns in `after` overlap its turns of `before` for the longest total time (turns are matched by time, because a merge renumbers turns and joins neighbouring ones). Pairs with an empty or unchanged new label are skipped.
+- **applying(renames, fields):** each field value with every rename replaced in order.
 
 #### 5.3 Carrying live names to the final transcript (`carryOver`), once per meeting
 Inputs:

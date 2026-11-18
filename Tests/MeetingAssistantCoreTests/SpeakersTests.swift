@@ -41,6 +41,42 @@ import Testing
         #expect(SpeakerNames.replacing("Speaker 1", with: "Erika", in: "Speaker 1 und Speaker 12 sprachen.") == "Erika und Speaker 12 sprachen.")
     }
 
+    @Test func replacesGermanAndLowercaseForms() {
+        #expect(SpeakerNames.replacing("Speaker 2", with: "Max", in: "Sprecher 2 fragt, Sprecherin 2 nickt, speaker 2 geht; Sprecher 21 bleibt.")
+                == "Max fragt, Max nickt, Max geht; Sprecher 21 bleibt.")
+        #expect(SpeakerNames.replacing("Them (?)", with: "Max", in: "them (?) sagt") == "Max sagt")
+    }
+
+    @Test func renamesBetweenTranscriptVersions() {
+        func sp(_ id: String, _ label: String) -> Speaker { Speaker(id: id, label: label, track: .system, embedding: nil, isMe: false) }
+        let before = Transcript(turns: [turn(0, "a", 0, 5, "eins zwei"), turn(1, "b", 5, 9, "drei vier fünf"), turn(2, "c", 9, 12, "sechs")],
+                                speakers: [sp("a", "Speaker 1"), sp("b", "Speaker 2"), sp("c", "Max Beispiel")],
+                                engine: "test", createdAt: Date(), processingSeconds: 0)
+        var after = before
+        after.speakers[0].label = "Erika Musterfrau"            // renamed
+        after.turns[1].speaker = "c"                            // Speaker 2 merged into Max Beispiel
+        after.speakers.remove(at: 1)
+        let r = SpeakerNames.renames(from: before, to: after)
+        #expect(r.map(\.old) == ["Speaker 1", "Speaker 2"])
+        #expect(r.map(\.new) == ["Erika Musterfrau", "Max Beispiel"])
+        let fields = [ProposedValue(key: "summary__value", label: "Summary", kind: .markdown, options: [], old: "",
+                                    value: "Speaker 1 stellt vor, Sprecher 2 fragt.", reason: nil, include: true)]
+        #expect(SpeakerNames.applying(r, to: fields)[0].value == "Erika Musterfrau stellt vor, Max Beispiel fragt.")
+        #expect(SpeakerNames.renames(from: before, to: before).isEmpty)
+    }
+
+    @Test func mergedSpeakerFollowedByTimeWhenTurnsAreJoined() {
+        func sp(_ id: String, _ label: String) -> Speaker { Speaker(id: id, label: label, track: .system, embedding: nil, isMe: false) }
+        var before = Transcript(turns: [turn(0, "c", 0, 4, "eins zwei"), turn(1, "b", 4.5, 8, "drei vier"), turn(2, "a", 9, 12, "fünf")],
+                                speakers: [sp("a", "Speaker 1"), sp("b", "Speaker 2"), sp("c", "Max Beispiel")],
+                                engine: "test", createdAt: Date(), processingSeconds: 0)
+        before.turns.sort { $0.start < $1.start }
+        var after = before
+        after.merge(speaker: "b", into: "c")          // joins turns 0 and 1 and renumbers
+        let r = SpeakerNames.renames(from: before, to: after)
+        #expect(r.count == 1 && r[0].old == "Speaker 2" && r[0].new == "Max Beispiel")
+    }
+
     @Test func importantPersonFields() {
         let d: [AssistContext.LabeledValue] = [
             .init(key: "utm", label: "Kampagne", value: "x"),

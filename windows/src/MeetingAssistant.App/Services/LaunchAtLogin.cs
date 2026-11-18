@@ -44,7 +44,7 @@ public sealed partial class LaunchAtLogin : ObservableObject
         try { LoginItem.Set(on); }
         catch (Exception e)
         {
-            Error = $"Could not {(on ? "turn on" : "turn off")} opening at login: {e.Message}";
+            Error = $"Could not {(on ? "turn on" : "turn off")} opening at startup: {e.Message}";
         }
         Refresh();
     }
@@ -64,8 +64,8 @@ public sealed partial class LaunchAtLogin : ObservableObject
     /// "Open Startup Apps".
     public void OpenSettings() => LoginItem.OpenSettings();
 
-    public const string Question = "Open MeetingAssistant at login?";
+    public const string Question = "Open MeetingAssistant at startup?";
     public const string QuestionMessage =
-        "Dictation, the tray menu and recording shortcuts are then ready right after you log in. You can change this later in Settings › General.";
+        "Dictation, the tray menu and recording shortcuts are then ready right after you start your computer. You can change this later in Settings › General.";
     public const string ApprovalCaption = "Allow MeetingAssistant in Settings › Apps › Startup.";
 }

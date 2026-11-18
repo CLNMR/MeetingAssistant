@@ -4,7 +4,7 @@ The `port-to-windows` skill keeps this file up to date.
 
 | | |
 |---|---|
-| Last ported changelog entry | 2026-11-18: Installable releases for Mac and Windows |
+| Last ported changelog entry | 2026-11-18: Every meeting gets its recap; speaker names reach the recap |
 | Spec commit ported from | uncommitted spec changes of 2026-11-18 (after 29296dd) |
 | Last run | 2026-11-18 |
 
@@ -44,9 +44,14 @@ Ported "Markdown editor for the recap fields": Core `Markdown` (blocks, inline r
 
 The Windows side of "Installable releases" was built together with the Mac side: the Inno Setup script `windows/installer/MeetingAssistant.iss` and the `windows` job of `.github/workflows/release.yml`. A self-contained `win-x64` publish was checked on the Mac (about 220 MB, includes the sherpa-onnx and onnxruntime DLLs); the installer itself is only built on the Windows runner.
 
+## 2026-11-18: graphics card (DirectML)
+
+Built on the Windows side only (no Mac change): `SpeechAcceleration` (Speech: probe output parsing, provider and threads, status line, cache fingerprint; with tests), `SpeechEngine.ProviderSource` and `RunGpuProbe`, `SpeechGpu` and `AppLog` (App: child process, cache, registry adapters), the `-gpuProbe` start argument, the Settings › Models switch and status, `speechOnGpu` in the preferences, `windows/native/build-directml.ps1` and the DirectML steps of the release workflow. Checked on the Mac: build, tests, and that the NuGet sherpa-onnx library prints `DirectML is for Windows only. Fallback to cpu!` to stderr for provider `directml` and keeps working on the CPU.
+
 ## Open items
 
 Not yet run on Windows (needs a Windows machine):
+- Graphics card: the first CI run of `build-directml.ps1` (sherpa-onnx 2.0.1 compiling against ONNX Runtime DirectML 1.24.4 headers, the DLL set and the import check), the `-gpuProbe` child (that sherpa-onnx's stderr reaches the parent from the windowless app, the 90 s timeout, the cache), DirectML on NVIDIA, AMD and Intel graphics (including int8 Parakeet on DirectML and same transcripts as on the CPU), CPU load and speed compared with the CPU path (live transcript with re-diarization, final pass), the fallback on a machine without DirectX 12 and in a development build (status "this build has no DirectML support"), and the status line and restart hint in Settings › Models.
 - The release installer: install without admin rights, Start menu entry, SmartScreen prompt, update over a running app (must ask to quit, never close it), uninstall (keeps app data, removes the Run value), and the portable zip.
 - The WPF app as a whole: startup, theme in light and dark, every screen.
 - WASAPI mic capture and process loopback (call audio), device changes, privacy-blocked microphone.
@@ -63,6 +68,6 @@ Not yet run on Windows (needs a Windows machine):
 Known differences, by design or for now:
 - The catch-up language is guessed from lists of common words of nine languages instead of a trained recognizer; short or mixed windows fall back to "the language of the transcript".
 - Qwen3-ASR and the language check are not available (no word-timestamp aligner in sherpa-onnx).
-- Transcription runs on the CPU, about 5× slower than the Mac. Live speaker separation re-diarizes a 20 s window every 3 s and is less accurate than the Mac's streaming model.
+- Without a usable graphics card transcription runs on the CPU, about 5× slower than the Mac. Live speaker separation re-diarizes a 20 s window every 3 s and is less accurate than the Mac's streaming model.
 - Word recall on quiet room audio is lower than on the Mac (about 78 % of the Mac's words on one in-person meeting; 97 % on a call).
 - Claude child processes are stopped by closing their input; a hard kill on app exit is not guaranteed.

@@ -47,13 +47,52 @@ public enum SpeakerNames {
         return out
     }
 
-    /// Replaces a generic label ("Speaker 2") with a name in text, as a whole word only.
+    /// Replaces a generic label ("Speaker 2") with a name in text, as a whole word only. Any capitalization
+    /// matches, and "Speaker N" also matches "Sprecher N" / "Sprecherin N", which Claude writes in German recaps.
     public static func replacing(_ old: String, with new: String, in text: String) -> String {
         guard !old.isEmpty, old != new else { return text }
-        let pattern = "(?<![\\p{L}\\p{N}])" + NSRegularExpression.escapedPattern(for: old) + "(?![\\p{L}\\p{N}])"
-        guard let re = try? NSRegularExpression(pattern: pattern) else { return text }
+        var core = NSRegularExpression.escapedPattern(for: old)
+        if old.hasPrefix("Speaker "), let n = Int(old.dropFirst(8)) { core = "(?:Speaker|Sprecher(?:in)?) \(n)" }
+        let pattern = "(?<![\\p{L}\\p{N}])" + core + "(?![\\p{L}\\p{N}])"
+        guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return text }
         return re.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text),
                                            withTemplate: NSRegularExpression.escapedTemplate(for: new))
+    }
+
+    /// Speakers that got a name between two versions of a transcript: a generic label renamed
+    /// ("Speaker 2" → "Erika"), or a generic speaker merged into another (the label of the speaker whose
+    /// turns now cover most of its speaking time wins).
+    public static func renames(from before: Transcript, to after: Transcript) -> [(old: String, new: String)] {
+        var out: [(old: String, new: String)] = []
+        for s in before.speakers where isGeneric(s.label) {
+            var new: String?
+            if let a = after.speakers.first(where: { $0.id == s.id }) {
+                new = a.label
+            } else {
+                // Merging renumbers turns and joins neighbours, so follow its turns by time, not by id.
+                var overlap: [String: Double] = [:]
+                for t in before.turns where t.speaker == s.id {
+                    for a in after.turns {
+                        let o = min(t.end, a.end) - max(t.start, a.start)
+                        if o > 0 { overlap[after.label(for: a.speaker), default: 0] += o }
+                    }
+                }
+                new = overlap.max { $0.value < $1.value }?.key
+            }
+            let n = new?.trimmingCharacters(in: .whitespaces) ?? ""
+            if !n.isEmpty, n != s.label { out.append((s.label, n)) }
+        }
+        return out
+    }
+
+    /// The recap fields with the renames applied (see `replacing`).
+    public static func applying(_ renames: [(old: String, new: String)], to fields: [ProposedValue]) -> [ProposedValue] {
+        guard !renames.isEmpty else { return fields }
+        return fields.map { f in
+            var f = f
+            for r in renames { f.value = replacing(r.old, with: r.new, in: f.value) }
+            return f
+        }
     }
 }
 

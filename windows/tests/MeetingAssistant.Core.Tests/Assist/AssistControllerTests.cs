@@ -42,10 +42,17 @@ sealed class FakeHost : IAssistHost
 sealed class FakeRecapClaude : IRecapClaude
 {
     public int Drafts;
-    public Task<List<ProposedValue>> DraftRecapAsync(string binary, string model, AssistRecord record, string sessionID, AyaListSchema schema, AyaConfig config, AyaRecord? existing)
+    /// Drafts for these sessions wait until their gate is released (a slow Claude call).
+    public Dictionary<string, TaskCompletionSource> Gates { get; } = new();
+    /// The first field's text per session (default "Recap of <id>").
+    public Dictionary<string, string> Texts { get; } = new();
+    public async Task<List<ProposedValue>> DraftRecapAsync(string binary, string model, AssistRecord record, string sessionID, AyaListSchema schema, AyaConfig config, AyaRecord? existing)
     {
         Drafts++;
-        return Task.FromResult(RecapBuilder.Target(Fields(), existing));
+        if (Gates.TryGetValue(sessionID, out var gate)) await gate.Task;
+        var fields = RecapBuilder.Target(Fields(), existing);
+        fields[0].Value = Texts.TryGetValue(sessionID, out var text) ? text : "Recap of " + sessionID;
+        return fields;
     }
     public Task<List<TemplateTable>> CompleteTablesAsync(string binary, string model, AssistRecord record, string sessionID, IReadOnlyList<TemplateTable> tables) =>
         Task.FromResult(tables.ToList());
@@ -112,6 +119,142 @@ public class AssistReviewControllerTests
     {
         host.Infos[id] = new SessionInfo { Id = id, Title = "Kickoff", StartedAt = DateTime.UtcNow, Mode = MeetingMode.Call, Status = status };
         JsonIO.Write(host.Infos[id], AppPaths.Info(id));
+    }
+
+    [Fact]
+    public async Task ARecapFinishingAfterAnotherMeetingWasOpenedGoesToItsOwnMeeting()
+    {
+        using var home = new TempHome();
+        var (review, host, claude, aya) = Make();
+        typeof(AssistConnection).GetProperty(nameof(AssistConnection.Schemas))!
+            .SetValue(aya, new Dictionary<string, AyaListSchema> { [AyaSlot.Meetings.Raw()] = MeetingSchema() });
+        typeof(AssistConnection).GetProperty(nameof(AssistConnection.ClaudeBinary))!.SetValue(aya, "claude");
+        Session(host, "S1", SessionStatus.Done);
+        Session(host, "S2", SessionStatus.Done);
+        Record().Save("S1");
+        var second = Record();
+        second.RecapDraft = Fields();
+        second.RecapDraft[0].Value = "Edited by hand";
+        second.Save("S2");
+        var gate = claude.Gates["S1"] = new TaskCompletionSource();
+
+        Assert.True(review.Open("S1"));                      // drafting S1 starts and waits for Claude
+        for (int i = 0; i < 50 && !review.IsRunning("S1", AssistReviewController.ReviewJob.Recap); i++) await Task.Delay(20);
+        Assert.True(review.IsRunning("S1", AssistReviewController.ReviewJob.Recap));
+        Assert.True(review.Open("S2"));                      // the user switches meetings
+        gate.SetResult();                                    // Claude answers for S1
+        for (int i = 0; i < 50 && review.IsRunning("S1", AssistReviewController.ReviewJob.Recap); i++) await Task.Delay(20);
+        await Task.Delay(AssistReviewController.DraftSaveDelay + TimeSpan.FromMilliseconds(300));
+
+        Assert.Equal("Edited by hand", review.RecapFields[0].Value);                // S2 shows its own draft
+        Assert.Equal("Edited by hand", AssistRecord.Load("S2")!.RecapDraft![0].Value);
+        Assert.Equal("Recap of S1", AssistRecord.Load("S1")!.RecapDraft![0].Value); // S1's draft went to S1
+        Assert.Equal(1, claude.Drafts);
+
+        Assert.True(review.Open("S1"));                      // back to S1: its draft is there, not drafted again
+        Assert.Equal("Recap of S1", review.RecapFields[0].Value);
+        await Task.Delay(100);
+        Assert.Equal(1, claude.Drafts);
+    }
+
+    static void Connect(AssistConnection aya)
+    {
+        typeof(AssistConnection).GetProperty(nameof(AssistConnection.Schemas))!
+            .SetValue(aya, new Dictionary<string, AyaListSchema> { [AyaSlot.Meetings.Raw()] = MeetingSchema() });
+        typeof(AssistConnection).GetProperty(nameof(AssistConnection.ClaudeBinary))!.SetValue(aya, "claude");
+    }
+
+    static async Task Until(Func<bool> done, int ms = 4000)
+    {
+        for (int i = 0; i < ms / 20 && !done(); i++) await Task.Delay(20);
+    }
+
+    [Fact]
+    public async Task SpeakersNamedWhileClaudeWritesReachTheRecap()
+    {
+        using var home = new TempHome();
+        var (review, host, claude, aya) = Make();
+        Connect(aya);
+        Session(host, "S1", SessionStatus.Done);
+        Record().Save("S1");
+        JsonIO.Write(new Transcript
+        {
+            Turns =
+            {
+                new Turn { Id = 0, Speaker = "a", Start = 0, End = 5, Text = "Guten Tag", Track = Track.System },
+                new Turn { Id = 1, Speaker = "b", Start = 10, End = 14, Text = "Hallo", Track = Track.System },   // not joined on merge
+            },
+            Speakers = { new Speaker { Id = "a", Label = "Speaker 1", Track = Track.System }, new Speaker { Id = "b", Label = "Speaker 2", Track = Track.System } },
+            Engine = "test",
+        }, AppPaths.TranscriptFile("S1"));
+        claude.Texts["S1"] = "Speaker 1 stellt vor, Sprecher 1 fragt, Speaker 2 antwortet.";
+        var gate = claude.Gates["S1"] = new TaskCompletionSource();
+
+        Assert.True(review.Open("S1"));
+        await Until(() => review.IsRunning("S1", AssistReviewController.ReviewJob.Recap));
+        Assert.True(review.IsRunning("S1", AssistReviewController.ReviewJob.Recap));
+        review.RenameFinalSpeaker("a", "Erika Musterfrau");   // while Claude is still writing
+        gate.SetResult();
+        await Until(() => !review.IsRunning("S1", AssistReviewController.ReviewJob.Recap));
+        Assert.Equal("Erika Musterfrau stellt vor, Erika Musterfrau fragt, Speaker 2 antwortet.", review.RecapFields[0].Value);
+
+        // Scribe merges Speaker 2 into Erika while the meeting is not open: the saved draft follows.
+        review.Finish();
+        var before = JsonIO.Read<Transcript>(AppPaths.TranscriptFile("S1"));
+        var after = before.Clone();
+        after.Merge("b", "a");
+        JsonIO.Write(after, AppPaths.TranscriptFile("S1"));
+        review.SpeakersChanged("S1", before, after);
+        Assert.Equal("Erika Musterfrau stellt vor, Erika Musterfrau fragt, Erika Musterfrau antwortet.", AssistRecord.Load("S1")!.RecapDraft![0].Value);
+    }
+
+    [Fact]
+    public async Task AMeetingLeftWhileTranscribingIsDraftedWhenItsTranscriptIsReady()
+    {
+        using var home = new TempHome();
+        var (review, host, claude, aya) = Make();
+        Connect(aya);
+        Session(host, "S1", SessionStatus.Transcribing);
+        Session(host, "S2", SessionStatus.Done);
+        Record().Save("S1");
+        var second = Record();
+        second.RecapDraft = Fields();
+        second.Save("S2");
+
+        Assert.True(review.Open("S1"));
+        await Until(() => review.RecapState.Text?.StartsWith("Waiting for the final transcript") == true);
+        Assert.StartsWith("Waiting for the final transcript", review.RecapState.Text);
+        Assert.True(review.Open("S2"));                       // the user moves on
+        await Task.Delay(AssistReviewController.TranscriptPoll + TimeSpan.FromMilliseconds(200));
+        Assert.False(review.RecapState.IsWorking);            // S2 never shows S1's waiting text
+        Assert.True(review.IsWaiting("S1"));
+        review.Finish();
+
+        host.Infos["S1"].Status = SessionStatus.Done;         // transcription finished
+        await Until(() => AssistRecord.Load("S1")?.RecapDraft is not null);
+        Assert.Equal("Recap of S1", AssistRecord.Load("S1")!.RecapDraft![0].Value);
+        Assert.True(AssistRecord.Load("S1")!.SpeakersCarried);
+        Assert.Equal(1, claude.Drafts);
+        Assert.Equal("Kickoff MUSTER SOLAR", AssistRecord.Load("S2")!.RecapDraft![0].Value);
+    }
+
+    [Fact]
+    public async Task DeletingAMeetingStopsWaitingForItsTranscript()
+    {
+        using var home = new TempHome();
+        var (review, host, claude, aya) = Make();
+        Connect(aya);
+        Session(host, "S1", SessionStatus.Transcribing);
+        Record().Save("S1");
+        Assert.True(review.Open("S1"));
+        review.Finish();
+        Assert.True(review.IsWaiting("S1"));
+        review.CancelWait("S1");
+        await Until(() => !review.IsWaiting("S1"));
+        Assert.False(review.IsWaiting("S1"));
+        host.Infos["S1"].Status = SessionStatus.Done;
+        await Task.Delay(AssistReviewController.TranscriptPoll + TimeSpan.FromMilliseconds(200));
+        Assert.Equal(0, claude.Drafts);
     }
 
     [Fact]

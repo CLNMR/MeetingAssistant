@@ -330,12 +330,15 @@ public sealed partial class SessionDetailViewModel : ScreenViewModel
     void Edit(Action<Transcript> change)
     {
         if (Transcript is null) return;
+        var before = Transcript;
         var t = Transcript.Clone();
         change(t);
         try { SessionStore.SaveTranscript(t, Info.Id); }
         catch (Exception e) { _scribe.ReportError($"Could not save: {e.Message}"); return; }
         Transcript = t;
         Rebuild();
+        // A speaker named or merged here also changes the Assist recap of this meeting (spec 03 §8).
+        App.Current?.Assist?.Review.SpeakersChanged(Info.Id, before, t.Clone());
     }
 
     /// Rename… (alert with name field). Learns the voice unless it is "me".

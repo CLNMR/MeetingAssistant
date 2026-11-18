@@ -11,3 +11,4 @@ windows/**/*.user
 windows/.vs/
 windows/publish/
 windows/dist/
+windows/native/directml/

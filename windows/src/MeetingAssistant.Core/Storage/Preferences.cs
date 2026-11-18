@@ -111,6 +111,9 @@ public sealed class Preferences
     public bool HideFromScreenSharing { get; set; } = true;
     /// Global shortcut that starts a meeting, or stops the running one, and brings the app to the front (null = none).
     public HotKeySetting? MeetingHotKey { get; set; } = HotKeySetting.DefaultMeeting;
+    /// Windows only: run speech recognition and speaker separation on the graphics card (DirectML),
+    /// falling back to the processor (spec 04 §6.5). The Mac uses the Neural Engine and has no such setting.
+    public bool SpeechOnGpu { get; set; } = true;
 
     /// The user's name for labels: trimmed `MyName`, or "Me" when empty.
     public string EffectiveName => MyName.Trim().Length == 0 ? "Me" : MyName.Trim();
@@ -134,6 +137,7 @@ public sealed class Preferences
             ["fitToCursor"] = FitToCursor, ["muteWhileDictating"] = MuteWhileDictating,
             ["hideFromScreenSharing"] = HideFromScreenSharing,
             ["meetingHotKey"] = MeetingHotKey?.ToJson(),            // explicit null = "no shortcut"
+            ["speechOnGpu"] = SpeechOnGpu,
         };
         if (InputDeviceUID is not null) o["inputDeviceUID"] = InputDeviceUID;
         return o;
@@ -168,6 +172,7 @@ public sealed class Preferences
         if (Bool("muteWhileDictating") is { } mu) p.MuteWhileDictating = mu;
         if (Bool("hideFromScreenSharing") is { } hs) p.HideFromScreenSharing = hs;
         if (o.ContainsKey("meetingHotKey")) p.MeetingHotKey = HotKeySetting.FromJson(o["meetingHotKey"]);
+        if (Bool("speechOnGpu") is { } gpu) p.SpeechOnGpu = gpu;
         return p;
     }
 

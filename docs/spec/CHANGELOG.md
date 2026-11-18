@@ -10,6 +10,22 @@ What changed for the user, in one to three sentences.
 Sections: 01-recording (Live transcription), 03-assist-ui (Review)
 ```
 
+## 2026-11-18: Every meeting gets its recap; speaker names reach the recap
+A meeting stopped while its final transcript was still being made now gets its recap drafted when the transcript is ready, even after opening another meeting, pressing Done or starting a new meeting (before, the wait was cancelled). Naming a speaker now always reaches the recap: also while Claude is still writing it, when renaming or merging in Scribe, when merging speakers, and when the recap says "Sprecher 2" or "speaker 2".
+Sections: 03-assist-ui (8. Open review, Wait-then-draft, Speaker names in the recap; 8.1 Rename), 02-assist-core (Speaker names: replacing, renames, applying)
+
+## 2026-11-18: Recaps no longer land in the wrong meeting
+Switching to another meeting while Claude drafted a recap, completed tables or proposed CRM updates (or while saving to Aya) could show the result in the meeting now open and save it there, and CRM proposals could then be applied to the wrong client. Each step now writes its result to the meeting it was started for, keeps running when another meeting is opened, and shows as running when you come back.
+Sections: 03-assist-ui (8. Review screen: steps that run while another meeting is opened)
+
+## 2026-11-18: Windows: transcription on the graphics card
+Windows only (the Mac already uses the Neural Engine). Parakeet, CAM++ and the pyannote segmentation (final diarization and the live re-diarization every 3 s) run on the graphics card through DirectML, which keeps the processor free; Silero VAD stays on the CPU. New switch *Use the graphics card for transcription* in Settings › Models (`speechOnGpu`, default on) with a status line ("Running on the graphics card." / "Running on the processor: <reason>." / "Running on the processor."); the choice is made once per app run, so a change applies after a restart. Before the first model load the app checks the graphics card in a child process (`-gpuProbe`, 90 s timeout, result cached per app version, onnxruntime.dll and display drivers in `speech.gpuProbe`) and falls back to the CPU when it fails. Release builds replace sherpa-onnx's CPU-only NuGet DLLs with a DirectML build made by `windows/native/build-directml.ps1`.
+Sections: 04-dictation-settings (6.5 Models: graphics card, Windows implementation, 9.5 releases), 01-recording (Windows implementation: graphics card, graphics-card check, speed)
+
+## 2026-11-18: "Open at login" is now "Open at startup"
+The setting is now *Open MeetingAssistant at startup*, the first-open question `Open MeetingAssistant at startup?` with the button *Open at Startup* and the message "… ready right after you start your computer. …", and the error `Could not turn on opening at startup: <reason>`. Behaviour is unchanged.
+Sections: 04-dictation-settings (3.5 question, 6.1 General)
+
 ## 2026-11-18: Installable releases for Mac and Windows
 Pushing a `v*` tag builds a Mac DMG and a Windows setup plus portable zip and publishes them as a GitHub release. The README explains installing from the release on both platforms.
 Sections: 04-dictation-settings (9.2 build script and DMG, 9.5 releases and the Windows installer)

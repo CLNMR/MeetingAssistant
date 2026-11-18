@@ -38,7 +38,7 @@ public sealed partial class GeneralSettingsViewModel : ObservableObject
 
     Preferences P => _services.Preferences;
 
-    /// *Open MeetingAssistant at login* (spec 04 §6.1): the registry, not the preferences.
+    /// *Open MeetingAssistant at startup* (spec 04 §6.1): the registry, not the preferences.
     public LaunchAtLogin Login => LaunchAtLogin.Shared;
 
     /// *Start or stop a meeting* shortcut (`meetingHotKey`, default Ctrl+Alt+Win+R).
@@ -294,9 +294,12 @@ public sealed record ModelRow(string Title, string Detail, string Size);
 public sealed partial class ModelsSettingsViewModel : ObservableObject
 {
     readonly ScribeController _scribe = ScribeController.Shared;
+    readonly AppServices _services = AppServices.Shared;
 
     public ModelsSettingsViewModel()
     {
+        _services.PreferencesChanged += () => AppServices.Ui(() => { OnPropertyChanged(nameof(UseGpu)); OnPropertyChanged(nameof(GpuStatus)); });
+        _services.SpeechGpu.Changed += () => AppServices.Ui(() => OnPropertyChanged(nameof(GpuStatus)));
         _scribe.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName is nameof(ScribeController.ModelSetup) or nameof(ScribeController.ModelsReady))
@@ -312,6 +315,22 @@ public sealed partial class ModelsSettingsViewModel : ObservableObject
     }
 
     public ObservableCollection<ModelRow> Models { get; } = new();
+
+    /// *Use the graphics card for transcription* (`speechOnGpu`, Windows only). The provider is chosen
+    /// once per app run, at the first model load; switching it on again repeats the graphics-card check.
+    public bool UseGpu
+    {
+        get => _services.Preferences.SpeechOnGpu;
+        set
+        {
+            if (value == _services.Preferences.SpeechOnGpu) return;
+            if (value) _services.SpeechGpu.ForgetCachedCheck();
+            _services.UpdatePreferences(p => p.SpeechOnGpu = value);
+        }
+    }
+
+    /// "Running on the graphics card." / "Running on the processor: <reason>." / …
+    public string GpuStatus => _services.SpeechGpu.Status;
 
     [ObservableProperty] string _totalSize = "";
 
@@ -340,6 +359,7 @@ public sealed partial class ModelsSettingsViewModel : ObservableObject
             Models.Add(new ModelRow(spec.Title, detail, spec.IsReady ? FormatSize(size) : "Not downloaded"));
         }
         TotalSize = total > 0 ? $"{FormatSize(total)} in {AppPaths.Models}" : "";
+        OnPropertyChanged(nameof(GpuStatus));
         OnPropertyChanged(nameof(CanDelete));
     }
 

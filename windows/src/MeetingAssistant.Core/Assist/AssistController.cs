@@ -137,6 +137,7 @@ public sealed class AssistController : ObservableObject
     public void DeleteMeeting(string id)
     {
         if (IsBusy(_host.Session(id))) return;
+        Review.CancelWait(id);
         if (Review.SessionId == id) FinishReview();
         _host.DeleteSession(id);
     }

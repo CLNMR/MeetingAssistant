@@ -1,4 +1,4 @@
-<!-- Settings › Models (spec 04 §6.5; Windows: sherpa-onnx models, sizes, download and delete). -->
+<!-- Settings › Models (spec 04 §6.5; Windows: sherpa-onnx models, sizes, graphics card, download and delete). -->
 <UserControl x:Class="MeetingAssistant.App.Views.ModelsSettingsView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -26,6 +26,17 @@
         </ui:Card>
         <TextBlock Style="{StaticResource Aya.Text.CaptionMuted}" Margin="0,6,0,0" Text="{Binding TotalSize}" TextWrapping="Wrap"
                    Visibility="{Binding TotalSize, Converter={StaticResource VisibleWhen}}" />
+
+        <ui:Card Padding="16,6" Margin="0,14,0,0">
+            <StackPanel>
+                <ToggleButton Style="{StaticResource Aya.Switch}" Margin="0,8,0,2" IsChecked="{Binding UseGpu}">
+                    <TextBlock Style="{StaticResource Aya.Text}" Text="Use the graphics card for transcription" TextWrapping="Wrap" />
+                </ToggleButton>
+                <TextBlock Style="{StaticResource Aya.Text.CaptionMuted}" TextWrapping="Wrap"
+                           Text="Speech recognition and speaker separation run on the graphics card (DirectML), which keeps the processor free. Falls back to the processor when the graphics card cannot be used. Changes apply after restarting MeetingAssistant." />
+                <TextBlock Style="{StaticResource Aya.Text.Caption}" Margin="0,4,0,8" TextWrapping="Wrap" Text="{Binding GpuStatus}" />
+            </StackPanel>
+        </ui:Card>
 
         <ui:Card Padding="16,12" Margin="0,14,0,0">
             <StackPanel>

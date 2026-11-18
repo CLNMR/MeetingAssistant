@@ -14,7 +14,7 @@
             <StackPanel>
                 <ToggleButton Style="{StaticResource Aya.Switch}" Margin="0,8,0,2" IsChecked="{Binding Login.IsOn}"
                               IsEnabled="{Binding Login.IsAvailable}">
-                    <TextBlock Style="{StaticResource Aya.Text}" Text="Open MeetingAssistant at login" />
+                    <TextBlock Style="{StaticResource Aya.Text}" Text="Open MeetingAssistant at startup" />
                 </ToggleButton>
                 <DockPanel Margin="0,0,0,6" Visibility="{Binding Login.NeedsApproval, Converter={StaticResource VisibleWhen}}">
                     <Button DockPanel.Dock="Right" Content="Open Startup Apps" Command="{Binding OpenStartupAppsCommand}" />

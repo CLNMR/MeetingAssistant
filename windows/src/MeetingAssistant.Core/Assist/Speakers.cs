@@ -84,13 +84,60 @@ public static class SpeakerNames
         return output;
     }
 
-    /// <summary>Replaces a generic label ("Speaker 2") with a name in text, as a whole word only (spec 02 §5.2).</summary>
+    /// <summary>
+    /// Replaces a generic label ("Speaker 2") with a name in text, as a whole word only (spec 02 §5.2). Any
+    /// capitalization matches, and "Speaker N" also matches "Sprecher N" / "Sprecherin N", which Claude writes in German recaps.
+    /// </summary>
     public static string Replacing(string old, string @new, string text)
     {
         if (old.Length == 0 || old == @new) return text;
-        var pattern = @"(?<![\p{L}\p{N}])" + Regex.Escape(old) + @"(?![\p{L}\p{N}])";
-        return Regex.Replace(text, pattern, @new.Replace("$", "$$"));
+        var core = Regex.Escape(old);
+        if (old.StartsWith("Speaker ", StringComparison.Ordinal)
+            && int.TryParse(old[8..], NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var n))
+            core = "(?:Speaker|Sprecher(?:in)?) " + n.ToString(CultureInfo.InvariantCulture);
+        var pattern = @"(?<![\p{L}\p{N}])" + core + @"(?![\p{L}\p{N}])";
+        return Regex.Replace(text, pattern, @new.Replace("$", "$$"), RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     }
+
+    /// <summary>
+    /// Speakers that got a name between two versions of a transcript (spec 02 §5.2): a generic label renamed
+    /// ("Speaker 2" → "Erika"), or a generic speaker merged into another (its turns now belong to a speaker
+    /// with a different label; the label most of its words went to wins).
+    /// </summary>
+    public static List<(string Old, string New)> Renames(Transcript before, Transcript after)
+    {
+        var output = new List<(string Old, string New)>();
+        foreach (var s in before.Speakers.Where(s => IsGeneric(s.Label)))
+        {
+            string? @new = null;
+            if (after.Speakers.FirstOrDefault(a => a.Id == s.Id) is { } kept) @new = kept.Label;
+            else
+            {
+                // Merging renumbers turns and joins neighbours, so follow its turns by time, not by id.
+                var overlap = new Dictionary<string, double>();
+                foreach (var t in before.Turns.Where(t => t.Speaker == s.Id))
+                    foreach (var a in after.Turns)
+                    {
+                        var o = Math.Min(t.End, a.End) - Math.Max(t.Start, a.Start);
+                        if (o > 0) { var label = after.Label(a.Speaker); overlap[label] = overlap.GetValueOrDefault(label) + o; }
+                    }
+                foreach (var (label, time) in overlap)
+                    if (@new is null || time > overlap[@new]) @new = label;
+            }
+            var n = @new?.Trim() ?? "";
+            if (n.Length > 0 && n != s.Label) output.Add((s.Label, n));
+        }
+        return output;
+    }
+
+    /// <summary>The recap fields with the renames applied (see <see cref="Replacing"/>); always copies.</summary>
+    public static List<ProposedValue> Applying(IReadOnlyList<(string Old, string New)> renames, IEnumerable<ProposedValue> fields) =>
+        fields.Select(f =>
+        {
+            var c = f.Copy();
+            foreach (var (o, n) in renames) c.Value = Replacing(o, n, c.Value);
+            return c;
+        }).ToList();
 }
 
 /// <summary>The few facts about a person worth showing at a glance (spec 02 §5.4).</summary>

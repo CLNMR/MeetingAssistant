@@ -32,6 +32,7 @@ public sealed class AppServices
         SpellCheck.Checker = WindowsSpellChecker.Create();
         SessionImport.Decoder = new MediaFoundationDecoder();
         Shared = new AppServices(store ?? SettingsStore.Shared);
+        SpeechEngine.ProviderSource = Shared.SpeechGpu.Choose;
         return Shared;
     }
 
@@ -43,7 +44,11 @@ public sealed class AppServices
         _matcher = _vocabulary.Matcher(SpellCheck.IsKnown);
         Cleanup = new TranscriptTextCleanup(InventedText.IsCredit, words => Matcher.Apply(words));
         Queue = new TranscriptionQueue(() => PipelineSettings, () => Cleanup);
+        SpeechGpu = new SpeechGpu(store, () => Preferences);
     }
+
+    /// Graphics card or processor for the speech models (Settings › Models, spec 04 §6.5).
+    public SpeechGpu SpeechGpu { get; }
 
     // ---- Preferences (spec 01 "Preferences relevant to Scribe", 04 §6) ----
 

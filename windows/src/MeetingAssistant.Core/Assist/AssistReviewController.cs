@@ -45,7 +45,9 @@ public sealed class AssistReviewController : ObservableObject
     readonly AssistConnection _aya;
     readonly IRecapClaude _claude;
     readonly TimeProvider _time;
-    CancellationTokenSource? _wait;
+    /// Per meeting: waiting for its final transcript, then drafting. Not cancelled when another meeting is
+    /// opened or the review is finished, so every meeting gets its recap; cancelled when the meeting is deleted.
+    readonly Dictionary<string, CancellationTokenSource> _waits = new();
     CancellationTokenSource? _draftSave;
 
     public AssistReviewController(IAssistHost host, AssistConnection aya, IRecapClaude? claude = null, TimeProvider? time = null)
@@ -70,6 +72,45 @@ public sealed class AssistReviewController : ObservableObject
 
     /// The session under review.
     public string? SessionId { get; private set; }
+
+    /// <summary>Review steps that take seconds (Claude, Aya). Each belongs to the meeting it started for (spec 03 §8).</summary>
+    public enum ReviewJob { Recap, Tables, Crm, Upload, ApplyCrm }
+    readonly Dictionary<string, HashSet<ReviewJob>> _jobs = new();
+    /// CRM proposals that finished while another meeting was open (not saved to disk).
+    readonly Dictionary<string, CRMProposal> _pendingCrm = new();
+
+    /// <summary>True while <paramref name="job"/> runs for meeting <paramref name="id"/>.</summary>
+    public bool IsRunning(string id, ReviewJob job) { lock (_jobs) return _jobs.TryGetValue(id, out var j) && j.Contains(job); }
+    /// Marks the job as running; false when it already runs for that meeting.
+    bool Begin(string id, ReviewJob job)
+    {
+        lock (_jobs)
+        {
+            if (!_jobs.TryGetValue(id, out var j)) _jobs[id] = j = new();
+            return j.Add(job);
+        }
+    }
+    void End(string id, ReviewJob job)
+    {
+        lock (_jobs) { if (_jobs.TryGetValue(id, out var j) && j.Remove(job) && j.Count == 0) _jobs.Remove(id); }
+    }
+    /// <summary>Meeting <paramref name="id"/> is the one shown in the review.</summary>
+    public bool IsOpen(string id) => SessionId == id;
+
+    /// <summary>
+    /// Changes a meeting's saved record: the open one in memory and on disk, any other one on disk only
+    /// (read fresh, so steps finishing one after another do not overwrite each other).
+    /// </summary>
+    void UpdateRecord(string id, Action<AssistRecord> change)
+    {
+        if (IsOpen(id) && Record is { } open) { change(open); Save(open); return; }
+        lock (this)
+        {
+            if (AssistRecord.Load(id) is not { } r) return;
+            change(r);
+            try { r.Save(id); } catch (IOException) { }
+        }
+    }
     public AssistRecord? Record { get => _record; private set => Set(ref _record, value); }
     /// Where the recap goes: an existing Aya meeting, or null for a new one.
     public string? TargetMeetingID { get => _targetMeetingID; private set => Set(ref _targetMeetingID, value); }
@@ -118,7 +159,6 @@ public sealed class AssistReviewController : ObservableObject
     /// </summary>
     public bool Open(string id)
     {
-        _wait?.Cancel();
         FlushDraft();
         if (AssistRecord.Load(id) is not { } rec) return false;
         SessionId = id;
@@ -133,18 +173,29 @@ public sealed class AssistReviewController : ObservableObject
         Tables = (rec.Tables ?? rec.State.Tables ?? new()).ToList();
         TablesState = rec.Tables is not null ? new StepState.Done() : StepState.IdleState;
         TargetMeetingID = rec.RecapRecordID ?? rec.Context.MeetingID;
+        if (IsRunning(id, ReviewJob.Recap)) RecapState = new StepState.Working("Claude is writing the recap…");
+        if (IsRunning(id, ReviewJob.Upload)) RecapState = new StepState.Working("Saving in Aya…");
+        if (IsRunning(id, ReviewJob.Tables)) TablesState = new StepState.Working("Claude is completing the tables…");
+        if (IsRunning(id, ReviewJob.Crm)) CrmState = new StepState.Working("Claude is reading the CRM records and the transcript…");
+        if (IsRunning(id, ReviewJob.ApplyCrm)) CrmState = new StepState.Working("Writing to Aya…");
+        lock (_jobs)
+        {
+            if (_pendingCrm.Remove(id, out var pending))
+            {
+                Crm = pending;
+                CrmState = pending.IsEmpty ? new StepState.Done("No changes proposed.") : StepState.IdleState;
+            }
+        }
         Raise(nameof(State)); Raise(nameof(Context));
         _host.ShowAssist();
         _ = LoadTargetsAsync(id);
-        var cts = _wait = new CancellationTokenSource();
-        _ = WaitForTranscriptThenDraftAsync(id, cts.Token);
+        StartWait(id);
         return true;
     }
 
     /// <summary>Finish review: flush the draft and reset everything.</summary>
     public void Finish()
     {
-        _wait?.Cancel();
         FlushDraft();
         Record = null; SessionId = null; Transcript = null; _recapFields = new(); Raise(nameof(RecapFields));
         Crm = null; Tables = new(); TablesState = StepState.IdleState;
@@ -188,7 +239,10 @@ public sealed class AssistReviewController : ObservableObject
     {
         if (_aya.Service is not { } svc) return;
         var day = _host.Session(id)?.StartedAt ?? Record?.Context.Date ?? DateTime.UtcNow;
-        try { DayMeetings = await svc.MeetingsOnDayOfAsync(day); } catch (AyaException) { DayMeetings = new(); }
+        List<AyaRecord> meetings;
+        try { meetings = await svc.MeetingsOnDayOfAsync(day); } catch (AyaException) { meetings = new(); }
+        if (!IsOpen(id)) return;   // another meeting was opened meanwhile
+        DayMeetings = meetings;
         await LoadTargetRecordAsync();
     }
 
@@ -235,6 +289,39 @@ public sealed class AssistReviewController : ObservableObject
 
     // MARK: Wait, carry names, draft (spec 02 §7.1 steps 3–5)
 
+    /// Starts waiting for meeting <paramref name="id"/>'s final transcript, unless that already runs.
+    void StartWait(string id)
+    {
+        CancellationTokenSource cts;
+        lock (_waits)
+        {
+            if (_waits.ContainsKey(id)) return;
+            cts = _waits[id] = new CancellationTokenSource();
+        }
+        _ = RunWaitAsync(id, cts);
+    }
+
+    async Task RunWaitAsync(string id, CancellationTokenSource cts)
+    {
+        try { await WaitForTranscriptThenDraftAsync(id, cts.Token); }
+        finally { lock (_waits) { if (_waits.TryGetValue(id, out var c) && c == cts) _waits.Remove(id); } }
+    }
+
+    /// <summary>True while meeting <paramref name="id"/> waits for its final transcript (or drafts after it).</summary>
+    public bool IsWaiting(string id) { lock (_waits) return _waits.ContainsKey(id); }
+
+    /// <summary>Stops waiting for a meeting's transcript (the meeting is deleted).</summary>
+    public void CancelWait(string id)
+    {
+        CancellationTokenSource? cts;
+        lock (_waits) { if (!_waits.Remove(id, out cts)) return; }
+        cts.Cancel();
+    }
+
+    /// <summary>
+    /// The recap uses the final transcript, so wait for transcription first (falls back to the live one). Runs per
+    /// meeting in the background; when it is done the recap (and the tables) are drafted for that meeting, open or not.
+    /// </summary>
     async Task WaitForTranscriptThenDraftAsync(string id, CancellationToken ct)
     {
         try
@@ -243,55 +330,112 @@ public sealed class AssistReviewController : ObservableObject
             {
                 var s = _host.Session(id)?.Status;
                 if (s is null or SessionStatus.Done or SessionStatus.Failed or SessionStatus.Recorded) break;
-                var p = _host.Progress(id);
-                RecapState = new StepState.Working("Waiting for the final transcript… " + (p is { } f ? $"{(int)(f * 100)} %" : ""));
+                if (IsOpen(id))
+                {
+                    var p = _host.Progress(id);
+                    RecapState = new StepState.Working("Waiting for the final transcript… " + (p is { } f ? $"{(int)(f * 100)} %" : ""));
+                }
                 await Task.Delay(TranscriptPoll, _time, ct);
             }
         }
         catch (OperationCanceledException) { return; }
-        if (ct.IsCancellationRequested) return;
+        if (ct.IsCancellationRequested || _host.Session(id) is null) return;
         CarrySpeakerNames(id);
-        if (_recapFields.Count > 0) return;
-        if (Record?.RecapRecordID is null)
+        var open = IsOpen(id);
+        var rec = open ? Record : AssistRecord.Load(id);
+        var draft = open ? _recapFields : rec?.RecapDraft ?? new();
+        if (rec is null || draft.Count > 0 || IsRunning(id, ReviewJob.Recap))
         {
-            var needTables = Record?.Tables is null && Tables.Count > 0;
-            await Task.WhenAll(DraftRecapAsync(), needTables ? CompleteTablesAsync() : Task.CompletedTask);
+            if (IsOpen(id) && RecapState is StepState.Working w && w.Message.StartsWith("Waiting for the final transcript", StringComparison.Ordinal))
+                RecapState = StepState.IdleState;
+            return;
         }
-        else RecapState = new StepState.Done("Already saved in Aya. Draft again to change it.");
+        if (rec.RecapRecordID is null)
+        {
+            var tables = open ? Tables : rec.Tables ?? rec.State.Tables ?? new();
+            var needTables = rec.Tables is null && tables.Count > 0 && !IsRunning(id, ReviewJob.Tables);
+            await Task.WhenAll(DraftRecapAsync(id), needTables ? CompleteTablesAsync(id) : Task.CompletedTask);
+        }
+        else if (IsOpen(id)) RecapState = new StepState.Done("Already saved in Aya. Draft again to change it.");
     }
 
-    /// <summary>Draft Recap / Draft Again (spec 03 §8.2).</summary>
-    public async Task DraftRecapAsync()
+    /// <summary>
+    /// Draft Recap / Draft Again (spec 03 §8.2), for the open meeting or, after wait-then-draft, for
+    /// <paramref name="sessionId"/> even when it is not open (the draft is then saved to its record).
+    /// </summary>
+    public async Task DraftRecapAsync(string? sessionId = null)
     {
-        if (SessionId is not { } id || Record is not { } rec) return;
-        if (_aya.Schema(AyaSlot.Meetings) is not { } schema) { RecapState = new StepState.Failed("Connect Aya in Settings › Assist first."); return; }
-        if (await _aya.EnsureClaudeAsync() is not { } b) { RecapState = new StepState.Failed(ClaudeException.NotInstalled().Message); return; }
-        RecapState = new StepState.Working("Claude is writing the recap…");
+        if ((sessionId ?? SessionId) is not { } id || IsRunning(id, ReviewJob.Recap)) return;
+        if ((IsOpen(id) ? Record : AssistRecord.Load(id)) is not { } rec) return;
+        if (_aya.Schema(AyaSlot.Meetings) is not { } schema)
+        {
+            if (IsOpen(id)) RecapState = new StepState.Failed("Connect Aya in Settings › Assist first.");
+            return;
+        }
+        if (await _aya.EnsureClaudeAsync() is not { } b)
+        {
+            if (IsOpen(id)) RecapState = new StepState.Failed(ClaudeException.NotInstalled().Message);
+            return;
+        }
+        if (!Begin(id, ReviewJob.Recap)) return;
         try
         {
-            if (TargetMeetingID is not null && TargetRecord is null) await LoadTargetRecordAsync();
-            RecapFields = await _claude.DraftRecapAsync(b, _aya.Settings.Model, rec, id, schema, _aya.Config, TargetRecord);
-            NameSession(id, RecapBuilder.Title(RecapFields, _aya.Config), rec.Context.Title, force: false);
-            RecapState = StepState.IdleState;
+            if (IsOpen(id)) RecapState = new StepState.Working("Claude is writing the recap…");
+            if (IsOpen(id) && TargetMeetingID is not null && TargetRecord is null) await LoadTargetRecordAsync();
+            // The meeting it is saved to; when another meeting was opened meanwhile, it is matched again on opening.
+            var existing = IsOpen(id) ? TargetRecord : null;
+            var speakersBefore = LoadTranscript(id);
+            var fields = await _claude.DraftRecapAsync(b, _aya.Settings.Model, rec, id, schema, _aya.Config, existing);
+            // Speakers named while Claude was writing: the draft still has their old labels.
+            if (speakersBefore is not null && LoadTranscript(id) is { } now)
+                fields = SpeakerNames.Applying(SpeakerNames.Renames(speakersBefore, now), fields);
+            if (IsOpen(id))
+            {
+                RecapFields = fields;
+                RecapState = StepState.IdleState;
+            }
+            else UpdateRecord(id, r => r.RecapDraft = fields.Count == 0 ? null : fields);
+            NameSession(id, RecapBuilder.Title(fields, _aya.Config), rec.Context.Title, force: false);
         }
-        catch (Exception e) when (e is ClaudeException or AyaException or IOException) { RecapState = new StepState.Failed(e.Message); }
+        catch (Exception e) when (e is ClaudeException or AyaException or IOException)
+        {
+            if (IsOpen(id)) RecapState = new StepState.Failed(e.Message);
+        }
+        finally { End(id, ReviewJob.Recap); }
     }
 
-    /// <summary>Complete from Transcript / Complete Again: Claude fills the tables (user cells stay); saved right away.</summary>
-    public async Task CompleteTablesAsync()
+    /// <summary>
+    /// Complete from Transcript / Complete Again: Claude fills the tables (user cells stay); saved right away.
+    /// For <paramref name="sessionId"/> when it is not open, the tables come from its saved record.
+    /// </summary>
+    public async Task CompleteTablesAsync(string? sessionId = null)
     {
-        if (SessionId is not { } id || Record is not { } rec || Tables.Count == 0) return;
-        if (await _aya.EnsureClaudeAsync() is not { } b) { TablesState = new StepState.Failed(ClaudeException.NotInstalled().Message); return; }
-        TablesState = new StepState.Working("Claude is completing the tables…");
+        if ((sessionId ?? SessionId) is not { } id || IsRunning(id, ReviewJob.Tables)) return;
+        if ((IsOpen(id) ? Record : AssistRecord.Load(id)) is not { } rec) return;
+        var tables = IsOpen(id) ? Tables : rec.Tables ?? rec.State.Tables ?? new();
+        if (tables.Count == 0) return;
+        if (await _aya.EnsureClaudeAsync() is not { } b)
+        {
+            if (IsOpen(id)) TablesState = new StepState.Failed(ClaudeException.NotInstalled().Message);
+            return;
+        }
+        if (!Begin(id, ReviewJob.Tables)) return;
         try
         {
-            var done = await _claude.CompleteTablesAsync(b, _aya.Settings.Model, rec, id, Tables);
-            Tables = done;
-            rec.Tables = done;
-            Save(rec);
-            TablesState = new StepState.Done();
+            if (IsOpen(id)) TablesState = new StepState.Working("Claude is completing the tables…");
+            var done = await _claude.CompleteTablesAsync(b, _aya.Settings.Model, rec, id, tables);
+            UpdateRecord(id, r => r.Tables = done);
+            if (IsOpen(id))
+            {
+                Tables = done;
+                TablesState = new StepState.Done();
+            }
         }
-        catch (Exception e) when (e is ClaudeException or IOException) { TablesState = new StepState.Failed(e.Message); }
+        catch (Exception e) when (e is ClaudeException or IOException)
+        {
+            if (IsOpen(id)) TablesState = new StepState.Failed(e.Message);
+        }
+        finally { End(id, ReviewJob.Tables); }
     }
 
     /// <summary>The user edits a table cell in the review (user-set, saved right away).</summary>
@@ -301,9 +445,9 @@ public sealed class AssistReviewController : ObservableObject
         var t = Tables.FirstOrDefault(x => x.Id == tid);
         if (t is null || !t.Set(row, column, value, byUser: true)) return;
         Raise(nameof(Tables));
-        if (Record is not { } rec) return;
-        rec.Tables = Tables;
-        Save(rec);
+        if (SessionId is not { } id) return;
+        var tables = Tables;
+        UpdateRecord(id, r => r.Tables = tables);
     }
 
     /// Label of the meeting field the tables are saved to, null when they are not saved.
@@ -324,6 +468,11 @@ public sealed class AssistReviewController : ObservableObject
     {
         if (SessionId is not { } id || Record is not { } rec || _aya.Service is not { } svc || _aya.Config.List(AyaSlot.Meetings) is not { } r
             || _aya.Schema(AyaSlot.Meetings) is not { } schema) return;
+        if (!Begin(id, ReviewJob.Upload)) return;
+        // Everything the upload uses is taken now, so opening another meeting meanwhile changes nothing.
+        var fields = _recapFields.Select(f => f.Copy()).ToList();
+        var tables = Tables;
+        var target = TargetMeetingID;
         var started = _host.Session(id)?.StartedAt ?? rec.Context.Date;
         var people = new[] { rec.Context.MyName }.Concat(rec.State.Attendees.Where(a => a.Present != false).Select(a => a.Name));
         var memberIDs = RecapBuilder.MemberIDs(people, _aya.Members);
@@ -331,31 +480,41 @@ public sealed class AssistReviewController : ObservableObject
         string? written = null;
         try
         {
-            if (TargetMeetingID is { } target)
+            AyaRecord saved;
+            if (target is not null)
             {
                 var current = await svc.RecordAsync(AyaSlot.Meetings, target);
-                var values = RecapBuilder.RecapValues(_recapFields, rec, id, started, schema, _aya.Config, current, memberIDs, Tables);
+                var values = RecapBuilder.RecapValues(fields, rec, id, started, schema, _aya.Config, current, memberIDs, tables);
                 written = Written(values);
-                TargetRecord = await svc.Client.UpdateAsync(r.WorkspaceId, r.TechName, target, values);
-                rec.RecapRecordID = target;
+                saved = await svc.Client.UpdateAsync(r.WorkspaceId, r.TechName, target, values);
             }
             else
             {
-                var values = RecapBuilder.RecapValues(_recapFields, rec, id, started, schema, _aya.Config, null, memberIDs, Tables);
+                var values = RecapBuilder.RecapValues(fields, rec, id, started, schema, _aya.Config, null, memberIDs, tables);
                 written = Written(values);
-                var created = await svc.Client.CreateAsync(r.WorkspaceId, r.TechName, values);
-                rec.RecapRecordID = created.Id;
-                TargetMeetingID = created.Id;
-                TargetRecord = created;
+                saved = await svc.Client.CreateAsync(r.WorkspaceId, r.TechName, values);
             }
-            rec.RecapUploadedAt = DateTime.UtcNow;
-            Save(rec);
+            UpdateRecord(id, x =>
+            {
+                x.RecapRecordID = saved.Id;
+                x.RecapUploadedAt = DateTime.UtcNow;
+                x.RecapDraft = fields.Count == 0 ? null : fields;
+            });
             _host.MarkSavedToAya(id);
             // The sidebar shows the title the meeting has in Aya.
-            NameSession(id, written ?? TargetRecord?.Title, rec.Context.Title, force: true);
-            RecapState = new StepState.Done($"Saved in Aya: “{TargetRecord?.Title ?? "meeting"}” ({r.Label}).");
+            NameSession(id, written ?? saved.Title, rec.Context.Title, force: true);
+            if (IsOpen(id))
+            {
+                TargetMeetingID = saved.Id;
+                TargetRecord = saved;
+                RecapState = new StepState.Done($"Saved in Aya: “{saved.Title}” ({r.Label}).");
+            }
         }
-        catch (Exception e) when (e is AyaException or IOException) { RecapState = new StepState.Failed(e.Message); }
+        catch (Exception e) when (e is AyaException or IOException)
+        {
+            if (IsOpen(id)) RecapState = new StepState.Failed(e.Message);
+        }
+        finally { End(id, ReviewJob.Upload); }
     }
 
     /// The title value being written, when the configured title field is a string.
@@ -397,8 +556,14 @@ public sealed class AssistReviewController : ObservableObject
         if (SessionId is not { } id || Record is not { } rec || _aya.Service is not { } svc
             || _aya.Config.List(AyaSlot.Clients) is null || _aya.Schema(AyaSlot.Clients) is not { } cs) return;
         if (rec.Context.ClientID is not { } clientID) { CrmState = new StepState.Done("This meeting has no client."); return; }
-        if (await _aya.EnsureClaudeAsync() is not { } b) { CrmState = new StepState.Failed(ClaudeException.NotInstalled().Message); return; }
-        CrmState = new StepState.Working("Claude is reading the CRM records and the transcript…");
+        if (IsRunning(id, ReviewJob.Crm)) return;
+        if (await _aya.EnsureClaudeAsync() is not { } b)
+        {
+            if (IsOpen(id)) CrmState = new StepState.Failed(ClaudeException.NotInstalled().Message);
+            return;
+        }
+        if (!Begin(id, ReviewJob.Crm)) return;
+        if (IsOpen(id)) CrmState = new StepState.Working("Claude is reading the CRM records and the transcript…");
         try
         {
             var client = await svc.RecordAsync(AyaSlot.Clients, clientID);
@@ -408,10 +573,16 @@ public sealed class AssistReviewController : ObservableObject
                 {
                     try { contacts.Add(await svc.RecordAsync(AyaSlot.Contacts, c.Id)); } catch (AyaException) { }
                 }
-            Crm = await _claude.ProposeCrmAsync(b, _aya.Settings.Model, rec, id, client, contacts, cs, _aya.Schema(AyaSlot.Contacts));
-            CrmState = Crm.IsEmpty ? new StepState.Done("No changes proposed.") : StepState.IdleState;
+            var proposal = await _claude.ProposeCrmAsync(b, _aya.Settings.Model, rec, id, client, contacts, cs, _aya.Schema(AyaSlot.Contacts));
+            if (!IsOpen(id)) { lock (_jobs) _pendingCrm[id] = proposal; return; }   // shown when that meeting is opened again
+            Crm = proposal;
+            CrmState = proposal.IsEmpty ? new StepState.Done("No changes proposed.") : StepState.IdleState;
         }
-        catch (Exception e) when (e is ClaudeException or AyaException or IOException) { CrmState = new StepState.Failed(e.Message); }
+        catch (Exception e) when (e is ClaudeException or AyaException or IOException)
+        {
+            if (IsOpen(id)) CrmState = new StepState.Failed(e.Message);
+        }
+        finally { End(id, ReviewJob.Crm); }
     }
 
     /// <summary>The count on "Apply Selected (N)": ticked client fields plus ticked contacts.</summary>
@@ -426,10 +597,12 @@ public sealed class AssistReviewController : ObservableObject
     /// </summary>
     public async Task ApplyCrmAsync()
     {
-        if (SessionId is null || Record is not { } rec || Crm is not { } p || _aya.Service is not { } svc
+        if (SessionId is not { } id || Record is not { } rec || Crm is not { } p || _aya.Service is not { } svc
             || _aya.Config.List(AyaSlot.Clients) is not { } cRef || rec.Context.ClientID is not { } clientID) return;
+        if (!Begin(id, ReviewJob.ApplyCrm)) return;
         CrmState = new StepState.Working("Writing to Aya…");
         var done = new List<string>();
+        var createdIDs = new List<string>();
         try
         {
             if (_aya.Schema(AyaSlot.Clients) is { } cs)
@@ -460,23 +633,24 @@ public sealed class AssistReviewController : ObservableObject
                         var values = RecapBuilder.NewContactValues(c, clientID, _aya.Config.ContactsClientField, ps);
                         if (values.Count == 0) continue;
                         var r = await svc.Client.CreateAsync(pRef.WorkspaceId, pRef.TechName, values);
-                        rec.CreatedContactIDs.Add(r.Id);
+                        createdIDs.Add(r.Id);
                         created += 1;
                     }
                 }
                 if (updated > 0) done.Add($"{updated} contact{(updated == 1 ? "" : "s")} updated");
                 if (created > 0) done.Add($"{created} contact{(created == 1 ? "" : "s")} created");
             }
-            rec.CrmAppliedAt = DateTime.UtcNow;
-            Save(rec);
+            UpdateRecord(id, x => { x.CreatedContactIDs.AddRange(createdIDs); x.CrmAppliedAt = DateTime.UtcNow; });
+            if (!IsOpen(id)) return;
             Crm = null;
             CrmState = new StepState.Done(done.Count == 0 ? "Nothing selected." : "Saved in Aya: " + string.Join(", ", done) + ".");
         }
         catch (Exception e) when (e is AyaException or IOException)
         {
-            if (rec.CreatedContactIDs.Count > 0) Save(rec);
-            CrmState = new StepState.Failed(e.Message + (done.Count == 0 ? "" : $" (already saved: {string.Join(", ", done)})"));
+            if (createdIDs.Count > 0) UpdateRecord(id, x => x.CreatedContactIDs.AddRange(createdIDs));   // created contacts stay linked
+            if (IsOpen(id)) CrmState = new StepState.Failed(e.Message + (done.Count == 0 ? "" : $" (already saved: {string.Join(", ", done)})"));
         }
+        finally { End(id, ReviewJob.ApplyCrm); }
     }
 
     // MARK: Speakers (spec 02 §5.3, 03 §8.1)
@@ -484,26 +658,39 @@ public sealed class AssistReviewController : ObservableObject
     static Transcript? LoadTranscript(string id) =>
         JsonIO.TryRead<Transcript>(AppPaths.TranscriptFile(id), out var t) ? t : null;
 
-    /// <summary>Gives the final transcript's speakers the names they had during the meeting, once per record.</summary>
+    /// <summary>
+    /// Gives the final transcript's speakers the names they had during the meeting, once per record. Works for any
+    /// meeting (read from disk when it is not open); the recap follows through <see cref="SpeakersChanged"/>.
+    /// </summary>
     public void CarrySpeakerNames(string id)
     {
-        if (SessionId != id) return;
-        Transcript = LoadTranscript(id);
-        if (Record is not { } rec || rec.SpeakersCarried == true) return;
+        var t0 = LoadTranscript(id);
+        if (IsOpen(id)) Transcript = t0;
+        if ((IsOpen(id) ? Record : AssistRecord.Load(id)) is not { } rec || rec.SpeakersCarried == true) return;
         try
         {
-            if (LoadTranscript(id) is not { } t) return;
+            if (t0 is null) return;
+            var t = t0.Clone();
             var names = SpeakerNames.CarryOver(t, rec.Lines, rec.State.Attendees);
-            if (names.Count == 0) { Transcript = t; return; }
+            if (names.Count == 0) return;
             foreach (var s in t.Speakers) if (names.TryGetValue(s.Id, out var n)) s.Label = n;
             try { JsonIO.Write(t, AppPaths.TranscriptFile(id)); } catch (IOException) { }
-            Transcript = t;
+            SpeakersChanged(id, t0, t);
         }
-        finally
-        {
-            rec.SpeakersCarried = true;
-            Save(rec);
-        }
+        finally { UpdateRecord(id, r => r.SpeakersCarried = true); }
+    }
+
+    /// <summary>
+    /// Speakers of a meeting's final transcript were named or merged (review, carry-over or Scribe's transcript
+    /// edits): the recap follows, in the open review or in the saved draft (spec 03 §8 "Speaker names in the recap").
+    /// </summary>
+    public void SpeakersChanged(string id, Transcript before, Transcript after)
+    {
+        var renames = SpeakerNames.Renames(before, after);
+        if (IsOpen(id)) Transcript = after;
+        if (renames.Count == 0) return;
+        if (IsOpen(id)) RecapFields = SpeakerNames.Applying(renames, _recapFields);
+        else UpdateRecord(id, r => { if (r.RecapDraft is { } d) r.RecapDraft = SpeakerNames.Applying(renames, d); });
     }
 
     /// <summary>
@@ -515,15 +702,12 @@ public sealed class AssistReviewController : ObservableObject
         var n = AssistText.TrimAll(name);
         if (SessionId is not { } id || n.Length == 0 || LoadTranscript(id) is not { } t) return;
         var sp = t.Speakers.FirstOrDefault(s => s.Id == speakerID);
-        if (sp is null) return;
-        var old = sp.Label;
-        if (old == n) return;
+        if (sp is null || sp.Label == n) return;
+        var before = t.Clone();
         sp.Label = n;
         try { JsonIO.Write(t, AppPaths.TranscriptFile(id)); } catch (IOException) { }
-        Transcript = t;
         if (sp.Embedding is { } e && !sp.IsMe) _host.LearnSpeaker(n, e);
-        if (SpeakerNames.IsGeneric(old))
-            RecapFields = _recapFields.Select(f => f.Copy() with { Value = SpeakerNames.Replacing(old, n, f.Value) }).ToList();
+        SpeakersChanged(id, before, t);
     }
 
     public PersonCard? PersonCard(string name, string? contactID = null) =>

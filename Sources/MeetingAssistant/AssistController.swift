@@ -103,7 +103,15 @@ final class AssistController: ObservableObject {
     @Published var tablesState: StepState = .idle
     @Published var crm: CRMProposal?
     @Published var crmState: StepState = .idle
-    private var waitTask: Task<Void, Never>?
+    /// Per meeting: waiting for its final transcript, then drafting. Not cancelled when another meeting is
+    /// opened, the review is closed or a new meeting starts, so every meeting gets its recap.
+    private var waitTasks: [String: Task<Void, Never>] = [:]
+    /// Review steps still running per meeting (Claude or Aya calls take seconds). A step writes its
+    /// result to the meeting it started for, so switching meetings meanwhile never mixes them up.
+    @Published private(set) var reviewJobs: [String: Set<ReviewJob>] = [:]
+    enum ReviewJob: Hashable { case recap, tables, crm, upload, applyCRM }
+    /// CRM proposals that finished while another meeting was open (they are not saved to disk).
+    private var pendingCRM: [String: CRMProposal] = [:]
 
     init(app: AppState) {
         self.app = app
@@ -450,7 +458,6 @@ final class AssistController: ObservableObject {
     // MARK: - Review
 
     func openReview(_ id: String) {
-        waitTask?.cancel()
         flushDraft()
         guard let rec = AssistRecord.load(id) else { return }
         recordID = id
@@ -466,6 +473,16 @@ final class AssistController: ObservableObject {
         reviewTables = rec.tables ?? rec.state.tables ?? []
         tablesState = rec.tables != nil ? .done(nil) : .idle
         targetMeetingID = rec.recapRecordID ?? rec.context.meetingID
+        let jobs = reviewJobs[id] ?? []
+        if jobs.contains(.recap) { recapState = .working("Claude is writing the recap…") }
+        if jobs.contains(.upload) { recapState = .working("Saving in Aya…") }
+        if jobs.contains(.tables) { tablesState = .working("Claude is completing the tables…") }
+        if jobs.contains(.crm) { crmState = .working("Claude is reading the CRM records and the transcript…") }
+        if jobs.contains(.applyCRM) { crmState = .working("Writing to Aya…") }
+        if let p = pendingCRM.removeValue(forKey: id) {
+            crm = p
+            crmState = p.client.isEmpty && p.contacts.isEmpty ? .done("No changes proposed.") : .idle
+        }
         phase = .review(id)
         app.appMode = .assist
         loadTargets(id)
@@ -477,7 +494,9 @@ final class AssistController: ObservableObject {
         guard let svc = service else { return }
         let day = app.sessions.first { $0.id == id }?.startedAt ?? record?.context.date ?? Date()
         Task {
-            dayMeetings = (try? await svc.meetings(onDayOf: day)) ?? []
+            let meetings = (try? await svc.meetings(onDayOf: day)) ?? []
+            guard isOpen(id) else { return }
+            dayMeetings = meetings
             await loadTargetRecord()
         }
     }
@@ -506,23 +525,49 @@ final class AssistController: ObservableObject {
     }
 
     /// The recap uses the final transcript, so wait for transcription first (falls back to the live one).
+    /// Runs per meeting in the background; when it is done the recap (and the tables) are drafted for that meeting.
     private func waitForTranscriptThenDraft(_ id: String) {
-        waitTask = Task {
+        guard waitTasks[id] == nil else { return }
+        waitTasks[id] = Task {
+            defer { waitTasks[id] = nil }
             while !Task.isCancelled {
                 let s = app.sessions.first { $0.id == id }?.status
                 if s == .done || s == .failed || s == .recorded || s == nil { break }
-                recapState = .working("Waiting for the final transcript… \(app.progress[id].map { "\(Int($0.fraction * 100)) %" } ?? "")")
+                if isOpen(id) {
+                    recapState = .working("Waiting for the final transcript… \(app.progress[id].map { "\(Int($0.fraction * 100)) %" } ?? "")")
+                }
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
             }
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, app.sessions.contains(where: { $0.id == id }) else { return }
             carrySpeakerNames(id)
-            guard recapFields.isEmpty else { return }
-            if record?.recapRecordID == nil {
-                let needTables = record?.tables == nil && !reviewTables.isEmpty
-                async let recap: Void = draftRecap()
-                async let tables: Void = needTables ? completeTables() : ()
-                _ = await (recap, tables)
-            } else { recapState = .done("Already saved in Aya. Draft again to change it.") }
+            guard let rec = isOpen(id) ? record : AssistRecord.load(id),
+                  (isOpen(id) ? recapFields : rec.recapDraft ?? []).isEmpty,
+                  !(reviewJobs[id]?.contains(.recap) ?? false) else {
+                if isOpen(id), case .working(let m) = recapState, m.hasPrefix("Waiting for the final transcript") { recapState = .idle }
+                return
+            }
+            if rec.recapRecordID == nil {
+                let tables = isOpen(id) ? reviewTables : (rec.tables ?? rec.state.tables ?? [])
+                let needTables = rec.tables == nil && !tables.isEmpty && !(reviewJobs[id]?.contains(.tables) ?? false)
+                Task { await draftRecap(id) }
+                if needTables { Task { await completeTables(id) } }
+            } else if isOpen(id) { recapState = .done("Already saved in Aya. Draft again to change it.") }
+        }
+    }
+
+    /// Stops waiting for a meeting's transcript (the meeting is deleted).
+    func cancelWait(_ id: String) { waitTasks.removeValue(forKey: id)?.cancel() }
+
+    /// Speakers of a meeting's final transcript were named or merged (review or Scribe): the recap follows,
+    /// in the open review or in the saved draft.
+    func speakersChanged(_ id: String, before: Transcript, after: Transcript) {
+        let renames = SpeakerNames.renames(from: before, to: after)
+        if isOpen(id) { reviewTranscript = after }
+        guard !renames.isEmpty else { return }
+        if isOpen(id) {
+            recapFields = SpeakerNames.applying(renames, to: recapFields)
+        } else if FileManager.default.fileExists(atPath: AssistRecord.url(id).path) {
+            updateRecord(id) { r in if let d = r.recapDraft { r.recapDraft = SpeakerNames.applying(renames, to: d) } }
         }
     }
 
@@ -545,38 +590,77 @@ final class AssistController: ObservableObject {
 
     var reviewSessionID: String? { if case .review(let id) = phase { return id }; return nil }
 
-    func draftRecap() async {
-        guard let id = reviewSessionID, let rec = record else { return }
+    func draftRecap(_ sessionID: String? = nil) async {
+        guard let id = sessionID ?? reviewSessionID, !(reviewJobs[id]?.contains(.recap) ?? false),
+              let rec = isOpen(id) ? record : AssistRecord.load(id) else { return }
         guard let schema = schemas[AyaSlot.meetings.rawValue] else { recapState = .failed("Connect Aya in Settings › Assist first."); return }
         if claudeBinary == nil { await checkClaude() }
-        guard let b = claudeBinary else { recapState = .failed(ClaudeCLI.CLIError.notInstalled.errorDescription!); return }
-        recapState = .working("Claude is writing the recap…")
+        guard let b = claudeBinary else { if isOpen(id) { recapState = .failed(ClaudeCLI.CLIError.notInstalled.errorDescription!) }; return }
+        begin(.recap, id)
+        defer { end(.recap, id) }
+        if isOpen(id) { recapState = .working("Claude is writing the recap…") }
         do {
-            if targetMeetingID != nil, targetRecord == nil { await loadTargetRecord() }
-            recapFields = try await RecapBuilder.draftRecap(binary: b, model: settings.model, record: rec, sessionID: id, schema: schema,
-                                                            config: config, existing: targetRecord)
-            nameSession(id, RecapBuilder.title(recapFields, config: config), automatic: rec.context.title, force: false)
-            recapState = .idle
+            if isOpen(id), targetMeetingID != nil, targetRecord == nil { await loadTargetRecord() }
+            // The meeting it is saved to; when another meeting was opened meanwhile, it is matched again on opening.
+            let existing = isOpen(id) ? targetRecord : nil
+            let speakersBefore = SessionStore.transcript(id)
+            var fields = try await RecapBuilder.draftRecap(binary: b, model: settings.model, record: rec, sessionID: id, schema: schema,
+                                                           config: config, existing: existing)
+            // Speakers named while Claude was writing: the draft still has their old labels.
+            if let before = speakersBefore, let now = SessionStore.transcript(id) {
+                fields = SpeakerNames.applying(SpeakerNames.renames(from: before, to: now), to: fields)
+            }
+            if isOpen(id) {
+                recapFields = fields
+                recapState = .idle
+            } else {
+                updateRecord(id) { $0.recapDraft = fields.isEmpty ? nil : fields }
+            }
+            nameSession(id, RecapBuilder.title(fields, config: config), automatic: rec.context.title, force: false)
         } catch {
-            recapState = .failed(error.localizedDescription)
+            if isOpen(id) { recapState = .failed(error.localizedDescription) }
+        }
+    }
+
+    /// The meeting `id` is the one shown in the review.
+    func isOpen(_ id: String) -> Bool { reviewSessionID == id && recordID == id }
+
+    private func begin(_ job: ReviewJob, _ id: String) { reviewJobs[id, default: []].insert(job) }
+    private func end(_ job: ReviewJob, _ id: String) {
+        reviewJobs[id]?.remove(job)
+        if reviewJobs[id]?.isEmpty == true { reviewJobs[id] = nil }
+    }
+
+    /// Changes a meeting's saved record: the open one in memory and on disk, any other one on disk only
+    /// (read fresh, so steps that finish one after another do not overwrite each other).
+    func updateRecord(_ id: String, _ change: (inout AssistRecord) -> Void) {
+        if recordID == id, var r = record {
+            change(&r); try? r.save(id); record = r
+        } else if var r = AssistRecord.load(id) {
+            change(&r); try? r.save(id)
         }
     }
 
     /// Claude fills the template's tables from the final transcript (cells the user set stay).
-    func completeTables() async {
-        guard let id = reviewSessionID, var rec = record, !reviewTables.isEmpty else { return }
+    func completeTables(_ sessionID: String? = nil) async {
+        guard let id = sessionID ?? reviewSessionID, !(reviewJobs[id]?.contains(.tables) ?? false),
+              let rec = isOpen(id) ? record : AssistRecord.load(id) else { return }
+        let tables = isOpen(id) ? reviewTables : (rec.tables ?? rec.state.tables ?? [])
+        guard !tables.isEmpty else { return }
         if claudeBinary == nil { await checkClaude() }
-        guard let b = claudeBinary else { tablesState = .failed(ClaudeCLI.CLIError.notInstalled.errorDescription!); return }
-        tablesState = .working("Claude is completing the tables…")
+        guard let b = claudeBinary else { if isOpen(id) { tablesState = .failed(ClaudeCLI.CLIError.notInstalled.errorDescription!) }; return }
+        begin(.tables, id)
+        defer { end(.tables, id) }
+        if isOpen(id) { tablesState = .working("Claude is completing the tables…") }
         do {
-            let done = try await RecapBuilder.completeTables(binary: b, model: settings.model, record: rec, sessionID: id, tables: reviewTables)
-            reviewTables = done
-            rec.tables = done
-            try? rec.save(id)
-            record = rec
-            tablesState = .done(nil)
+            let done = try await RecapBuilder.completeTables(binary: b, model: settings.model, record: rec, sessionID: id, tables: tables)
+            updateRecord(id) { $0.tables = done }
+            if isOpen(id) {
+                reviewTables = done
+                tablesState = .done(nil)
+            }
         } catch {
-            tablesState = .failed(error.localizedDescription)
+            if isOpen(id) { tablesState = .failed(error.localizedDescription) }
         }
     }
 
@@ -585,10 +669,9 @@ final class AssistController: ObservableObject {
         let tid = String(row.split(separator: ".").first ?? "")
         guard let t = reviewTables.firstIndex(where: { $0.id == tid }),
               reviewTables[t].set(row: row, column: column, value: value, byUser: true) else { return }
-        guard let id = reviewSessionID, var rec = record else { return }
-        rec.tables = reviewTables
-        try? rec.save(id)
-        record = rec
+        guard let id = reviewSessionID else { return }
+        let tables = reviewTables
+        updateRecord(id) { $0.tables = tables }
     }
 
     /// Label of the meeting field the tables are saved to, nil when they are not saved.
@@ -598,49 +681,59 @@ final class AssistController: ObservableObject {
     }
 
     func uploadRecap() async {
-        guard let id = reviewSessionID, var rec = record, let svc = service, let ref = config.list(.meetings),
-              let schema = schemas[AyaSlot.meetings.rawValue] else { return }
+        guard let id = reviewSessionID, let rec = record, let svc = service, let ref = config.list(.meetings),
+              let schema = schemas[AyaSlot.meetings.rawValue], !(reviewJobs[id]?.contains(.upload) ?? false) else { return }
+        // Everything the upload uses is taken now, so opening another meeting meanwhile changes nothing.
+        let fields = recapFields, tables = reviewTables, target = targetMeetingID
         let started = app.sessions.first { $0.id == id }?.startedAt ?? rec.context.date
         let people = [rec.context.myName] + rec.state.attendees.filter { $0.present != false }.map(\.name)
         let memberIDs = RecapBuilder.memberIDs(attendees: people, members: members)
+        begin(.upload, id)
+        defer { end(.upload, id) }
         recapState = .working("Saving in Aya…")
         var written: String?
         do {
-            if let target = targetMeetingID {
+            let saved: AyaRecord
+            if let target {
                 let current = try await svc.record(.meetings, id: target)
-                let values = RecapBuilder.recapValues(recapFields, record: rec, sessionID: id, startedAt: started, schema: schema,
-                                                      config: config, existing: current, memberIDs: memberIDs, tables: reviewTables)
+                let values = RecapBuilder.recapValues(fields, record: rec, sessionID: id, startedAt: started, schema: schema,
+                                                      config: config, existing: current, memberIDs: memberIDs, tables: tables)
                 written = values[config.meetingTitleField]?.string
-                targetRecord = try await svc.client.update(workspace: ref.workspaceId, list: ref.techName, id: target, values: values)
-                rec.recapRecordID = target
+                saved = try await svc.client.update(workspace: ref.workspaceId, list: ref.techName, id: target, values: values)
             } else {
-                let values = RecapBuilder.recapValues(recapFields, record: rec, sessionID: id, startedAt: started, schema: schema,
-                                                      config: config, memberIDs: memberIDs, tables: reviewTables)
+                let values = RecapBuilder.recapValues(fields, record: rec, sessionID: id, startedAt: started, schema: schema,
+                                                      config: config, memberIDs: memberIDs, tables: tables)
                 written = values[config.meetingTitleField]?.string
-                let created = try await svc.client.create(workspace: ref.workspaceId, list: ref.techName, values: values)
-                rec.recapRecordID = created.id
-                targetMeetingID = created.id
-                targetRecord = created
+                saved = try await svc.client.create(workspace: ref.workspaceId, list: ref.techName, values: values)
             }
-            rec.recapUploadedAt = Date()
-            try? rec.save(id)
-            record = rec
+            updateRecord(id) {
+                $0.recapRecordID = saved.id
+                $0.recapUploadedAt = Date()
+                $0.recapDraft = fields.isEmpty ? nil : fields
+            }
             app.savedToAyaIDs.insert(id)
             // The sidebar shows the title the meeting has in Aya.
-            nameSession(id, written ?? targetRecord?.title, automatic: rec.context.title, force: true)
-            recapState = .done("Saved in Aya: “\(targetRecord?.title ?? "meeting")” (\(ref.label)).")
+            nameSession(id, written ?? saved.title, automatic: rec.context.title, force: true)
+            if isOpen(id) {
+                targetMeetingID = saved.id
+                targetRecord = saved
+                recapState = .done("Saved in Aya: “\(saved.title)” (\(ref.label)).")
+            }
         } catch {
-            recapState = .failed(error.localizedDescription)
+            if isOpen(id) { recapState = .failed(error.localizedDescription) }
         }
     }
 
     func proposeCRM() async {
         guard let id = reviewSessionID, let rec = record, let svc = service,
-              let cRef = config.list(.clients), let cs = schemas[AyaSlot.clients.rawValue] else { return }
+              let cRef = config.list(.clients), let cs = schemas[AyaSlot.clients.rawValue],
+              !(reviewJobs[id]?.contains(.crm) ?? false) else { return }
         guard let clientID = rec.context.clientID else { crmState = .done("This meeting has no client."); return }
         if claudeBinary == nil { await checkClaude() }
-        guard let b = claudeBinary else { crmState = .failed(ClaudeCLI.CLIError.notInstalled.errorDescription!); return }
-        crmState = .working("Claude is reading the CRM records and the transcript…")
+        guard let b = claudeBinary else { if isOpen(id) { crmState = .failed(ClaudeCLI.CLIError.notInstalled.errorDescription!) }; return }
+        begin(.crm, id)
+        defer { end(.crm, id) }
+        if isOpen(id) { crmState = .working("Claude is reading the CRM records and the transcript…") }
         do {
             let client = try await svc.client.record(workspace: cRef.workspaceId, list: cRef.techName, id: clientID)
             var contacts: [AyaRecord] = []
@@ -649,17 +742,22 @@ final class AssistController: ObservableObject {
                     if let r = try? await svc.client.record(workspace: pRef.workspaceId, list: pRef.techName, id: c.id) { contacts.append(r) }
                 }
             }
-            crm = try await RecapBuilder.proposeCRM(binary: b, model: settings.model, record: rec, sessionID: id, client: client,
-                                                    contacts: contacts, clientSchema: cs, contactSchema: schemas[AyaSlot.contacts.rawValue])
-            crmState = (crm?.client.isEmpty ?? true) && (crm?.contacts.isEmpty ?? true) ? .done("No changes proposed.") : .idle
+            let proposal = try await RecapBuilder.proposeCRM(binary: b, model: settings.model, record: rec, sessionID: id, client: client,
+                                                             contacts: contacts, clientSchema: cs, contactSchema: schemas[AyaSlot.contacts.rawValue])
+            guard isOpen(id) else { pendingCRM[id] = proposal; return }   // shown when that meeting is opened again
+            crm = proposal
+            crmState = proposal.client.isEmpty && proposal.contacts.isEmpty ? .done("No changes proposed.") : .idle
         } catch {
-            crmState = .failed(error.localizedDescription)
+            if isOpen(id) { crmState = .failed(error.localizedDescription) }
         }
     }
 
     func applyCRM() async {
-        guard let id = reviewSessionID, var rec = record, let p = crm, let svc = service, let cRef = config.list(.clients),
-              let clientID = rec.context.clientID else { return }
+        guard let id = reviewSessionID, let rec = record, let p = crm, let svc = service, let cRef = config.list(.clients),
+              let clientID = rec.context.clientID, !(reviewJobs[id]?.contains(.applyCRM) ?? false) else { return }
+        begin(.applyCRM, id)
+        defer { end(.applyCRM, id) }
+        var createdIDs: [String] = []
         crmState = .working("Writing to Aya…")
         var done: [String] = []
         do {
@@ -683,25 +781,25 @@ final class AssistController: ObservableObject {
                     } else {
                         if let link = config.contactsClientField { values[link] = ps.linkValue(link, id: clientID) }
                         let r = try await svc.client.create(workspace: pRef.workspaceId, list: pRef.techName, values: values)
-                        rec.createdContactIDs.append(r.id)
+                        createdIDs.append(r.id)
                         created += 1
                     }
                 }
                 if updated > 0 { done.append("\(updated) contact\(updated == 1 ? "" : "s") updated") }
                 if created > 0 { done.append("\(created) contact\(created == 1 ? "" : "s") created") }
             }
-            rec.crmAppliedAt = Date()
-            try? rec.save(id)
-            record = rec
+            updateRecord(id) { $0.createdContactIDs += createdIDs; $0.crmAppliedAt = Date() }
+            guard isOpen(id) else { return }
             crm = nil
             crmState = .done(done.isEmpty ? "Nothing selected." : "Saved in Aya: " + done.joined(separator: ", ") + ".")
         } catch {
+            updateRecord(id) { $0.createdContactIDs += createdIDs }   // contacts created before the error stay linked
+            guard isOpen(id) else { return }
             crmState = .failed(error.localizedDescription + (done.isEmpty ? "" : " (already saved: \(done.joined(separator: ", ")))"))
         }
     }
 
     func finishReview() {
-        waitTask?.cancel()
         flushDraft()
         phase = .prepare
         record = nil; recordID = nil; reviewTranscript = nil; recapFields = []; crm = nil; reviewTables = []; tablesState = .idle

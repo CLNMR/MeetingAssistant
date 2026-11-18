@@ -25,7 +25,7 @@ public sealed class SettingsStore
     public const string FloatingPanelOpenKey = "floatingPanel.open";
     public const string FloatingPanelFontSizeKey = "floatingPanel.fontSize";
     public const string ModelsReadyKey = "modelsReady";
-    /// Set once the first-open question "Open MeetingAssistant at login?" was answered (spec 04 §3.5).
+    /// Set once the first-open question "Open MeetingAssistant at startup?" was answered (spec 04 §3.5).
     public const string LaunchAtLoginAskedKey = "launchAtLogin.asked";
 
     /// Opens the store at `path` (default <see cref="AppPaths.PreferencesFile"/>). A missing or
