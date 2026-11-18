@@ -360,6 +360,19 @@ public static class RecapBuilder
     }
 
     /// <summary>
+    /// Members Aya refused as participants because they are not in the meeting list's workspace
+    /// (<c>… member &lt;id&gt; is not part of this workspace</c>), in the order named, each once (spec 02 §7.5).
+    /// </summary>
+    public static List<string> RejectedMemberIDs(string message)
+    {
+        var output = new List<string>();
+        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(message,
+                     "member ([0-9A-Za-z]+) is not part of this workspace", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+            if (!output.Contains(m.Groups[1].Value)) output.Add(m.Groups[1].Value);
+        return output;
+    }
+
+    /// <summary>
     /// Team members among the attendees (and the user), matched by name (spec 02 §7.5): full name, or a
     /// first name that matches exactly one member. Each member once.
     /// </summary>

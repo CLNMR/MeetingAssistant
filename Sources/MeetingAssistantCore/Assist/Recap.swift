@@ -255,6 +255,18 @@ public enum RecapBuilder {
         return out
     }
 
+    /// Members Aya refused as participants because they are not in the meeting list's workspace
+    /// (`… member <id> is not part of this workspace`), in the order named.
+    public static func rejectedMemberIDs(_ message: String) -> [String] {
+        guard let re = try? NSRegularExpression(pattern: "member ([0-9A-Za-z]+) is not part of this workspace",
+                                                options: [.caseInsensitive]) else { return [] }
+        var out: [String] = []
+        for m in re.matches(in: message, range: NSRange(message.startIndex..., in: message)) {
+            if let r = Range(m.range(at: 1), in: message), !out.contains(String(message[r])) { out.append(String(message[r])) }
+        }
+        return out
+    }
+
     /// Team members among the attendees (and the user), matched by name.
     public static func memberIDs(attendees: [String], members: [AyaRecord]) -> [String] {
         func norm(_ s: String) -> String {

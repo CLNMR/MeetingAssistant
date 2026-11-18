@@ -373,9 +373,12 @@ When the target is an existing meeting, a hint reads "Fields that already have c
   - anything else: a text field that grows to 6 lines.
 - If the field has a note (e.g. "Removed deadlines not said in the meeting: “…”"), it shows in warning colour with a calendar-exclamation icon.
 
-**Markdown field** (recap fields and CRM changes of kind markdown). One box (`card` fill, radius 8, `input` border; `primary` at 60 % while editing) with two modes:
-- **Preview** (when the field has text): the formatted text, 12 × 10 px padding, selectable. Clicking it, or the **Edit** button (secondary, small, pencil icon, tooltip "Edit the Markdown text") that shows top right on hover, switches to the editor. An empty field reads "Empty. Click to write." (subtle).
-- **Editor** (when the field is empty, or after a click): a formatting bar on a `field` background, then the text. The bar has: Heading (menu: Heading 1, 2, 3), Bold (⌘B), Italic (⌘I), Strikethrough (⇧⌘X), Code (⌘E), a separator, Bulleted list, Numbered list, Checklist, Quote, and on the right **Done** (secondary, small; also Esc), which returns to the preview. Tooltips name the shortcut. The editor grows with the text from **90 to 420 px** and scrolls beyond. A field stays in the mode it is in until Done (losing focus does not switch). Spell checking is on; smart quotes, smart dashes and text replacement are off, so the Markdown stays intact. Pasting inserts plain text.
+**Markdown field** (recap fields and CRM changes of kind markdown). Always an editor, so a click puts the cursor where it lands and typing edits right there (there is no separate preview mode). One box (`card` fill, radius 8, `input` border; `primary` at 60 % while it has the focus):
+- The text with its Markdown highlighted as it is typed (*Editor highlighting* below), 8 px text inset. An empty field without focus reads "Empty. Click to write." (subtle, not clickable itself; the click goes to the field).
+- While the field has the focus, a formatting bar on a `field` background sits above the text: Heading (menu: Heading 1, 2, 3), Bold (⌘B), Italic (⌘I), Strikethrough (⇧⌘X), Code (⌘E), a separator, Bulleted list, Numbered list, Checklist, Quote, and on the right **Done** (secondary, small, tooltip "Leave the field (Esc)"), which, like Esc, takes the focus away. Tooltips name the shortcut. The bar disappears when the field loses the focus.
+- The field grows with the text from **44 to 420 px** and scrolls beyond. A field never takes the focus by itself when it appears (only on a click; the debug snapshot can start one focused). Spell checking is on; smart quotes, smart dashes and text replacement are off, so the Markdown stays intact. Pasting inserts plain text.
+
+`MarkdownPreview` (the formatted rendering) is still used where text is only shown, not edited.
 
 Rendering, the same in the preview and in the editor's highlighting (13 pt base):
 - Headings `#`…`######` (a closing `#` run is dropped): level 1 at 18 pt, 2 at 16 pt, 3 at 14.5 pt, 4–6 at 13 pt, all semibold.

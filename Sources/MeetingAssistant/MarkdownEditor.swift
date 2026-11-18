@@ -2,62 +2,46 @@ import AppKit
 import MeetingAssistantCore
 import SwiftUI
 
-/// A Markdown field of the recap (and of CRM changes): shows the formatted text and switches to an
-/// editor with a formatting bar and live highlighting on click (spec 03 §8.2).
+/// A Markdown field of the recap (and of CRM changes): always the editor, so a click puts the cursor
+/// where it lands. The Markdown is highlighted as it is typed (headings larger, markup faint, lists
+/// in the accent colour); the formatting bar shows while the field has the focus (spec 03 §8.2).
 struct MarkdownField: View {
     @Binding var text: String
-    @State private var editing: Bool
-    @State private var hover = false
+    @State private var focused = false
     @State private var height: CGFloat = MarkdownField.minHeight
     @State private var proxy = MarkdownEditorProxy()
+    private let autoFocus: Bool
 
-    static let minHeight: CGFloat = 90
+    static let minHeight: CGFloat = 44
     static let maxHeight: CGFloat = 420
 
-    /// Starts in the editor when the text is empty (or when `editing` says so), else in the preview.
+    /// `editing: true` puts the cursor into the field when it appears.
     init(text: Binding<String>, editing: Bool? = nil) {
         _text = text
-        _editing = State(initialValue: editing ?? text.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        autoFocus = editing ?? false
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if editing {
+            if focused {
                 toolbar
                 Divider().overlay(Aya.border)
-                MarkdownTextView(text: $text, height: $height, proxy: proxy, onDone: { editing = false })
-                    .frame(height: min(max(height, Self.minHeight), Self.maxHeight))
-            } else {
-                preview
             }
+            MarkdownTextView(text: $text, height: $height, proxy: proxy, autoFocus: autoFocus,
+                             onDone: { proxy.textView?.window?.makeFirstResponder(nil) },
+                             onFocus: { focused = $0 })
+                .frame(height: min(max(height, Self.minHeight), Self.maxHeight))
+                .overlay(alignment: .topLeading) {
+                    if !focused && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text("Empty. Click to write.").font(.system(size: 13)).foregroundStyle(Aya.textSubtle)
+                            .padding(.horizontal, 13).padding(.vertical, 8).allowsHitTesting(false)
+                    }
+                }
         }
         .background(Aya.card, in: RoundedRectangle(cornerRadius: Aya.radiusControl, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: Aya.radiusControl, style: .continuous)
-            .strokeBorder(editing ? Aya.primary.opacity(0.6) : Aya.input, lineWidth: 1))
+            .strokeBorder(focused ? Aya.primary.opacity(0.6) : Aya.input, lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: Aya.radiusControl, style: .continuous))
-    }
-
-    private var preview: some View {
-        ZStack(alignment: .topTrailing) {
-            Group {
-                if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text("Empty. Click to write.").font(.system(size: 13)).foregroundStyle(Aya.textSubtle)
-                } else {
-                    MarkdownPreview(text: text)
-                }
-            }
-            .frame(maxWidth: .infinity, minHeight: 40, alignment: .topLeading)
-            .padding(.horizontal, 12).padding(.vertical, 10)
-            .contentShape(Rectangle())
-            .onTapGesture { editing = true }
-            if hover {
-                Button { editing = true } label: { Label("Edit", systemImage: "pencil") }
-                    .buttonStyle(AyaButtonStyle(kind: .secondary, size: .small))
-                    .padding(6)
-                    .help("Edit the Markdown text")
-            }
-        }
-        .onHover { hover = $0 }
     }
 
     private var toolbar: some View {
@@ -79,9 +63,9 @@ struct MarkdownField: View {
             tool("checklist", "Checklist") { proxy.run(.lines(.task)) }
             tool("text.quote", "Quote") { proxy.run(.lines(.quote)) }
             Spacer(minLength: 8)
-            Button("Done") { editing = false }
+            Button("Done") { proxy.textView?.window?.makeFirstResponder(nil) }
                 .buttonStyle(AyaButtonStyle(kind: .secondary, size: .small))
-                .help("Show the formatted text (Esc)")
+                .help("Leave the field (Esc)")
         }
         .padding(.horizontal, 6).padding(.vertical, 4)
         .background(Aya.field)
@@ -249,6 +233,19 @@ final class MarkdownScrollView: NSScrollView {
 
 final class MarkdownNSTextView: NSTextView {
     var onDone: (() -> Void)?
+    var onFocus: ((Bool) -> Void)?
+
+    override func becomeFirstResponder() -> Bool {
+        let ok = super.becomeFirstResponder()
+        if ok { onFocus?(true) }
+        return ok
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let ok = super.resignFirstResponder()
+        if ok { onFocus?(false) }
+        return ok
+    }
 
     func run(_ c: MarkdownCommand) {
         window?.makeFirstResponder(self)
@@ -292,7 +289,9 @@ struct MarkdownTextView: NSViewRepresentable {
     @Binding var text: String
     @Binding var height: CGFloat
     let proxy: MarkdownEditorProxy
+    var autoFocus = false
     var onDone: () -> Void
+    var onFocus: (Bool) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -323,6 +322,7 @@ struct MarkdownTextView: NSViewRepresentable {
         tv.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         tv.insertionPointColor = NSColor(Aya.primary)
         tv.onDone = onDone
+        tv.onFocus = onFocus
         tv.string = text
         scroll.documentView = tv
         proxy.textView = tv
@@ -330,9 +330,11 @@ struct MarkdownTextView: NSViewRepresentable {
         scroll.onWidthChange = { [weak tv, weak coordinator = context.coordinator] in
             if let tv { coordinator?.measure(tv) }
         }
-        RunLoop.main.perform {
-            tv.window?.makeFirstResponder(tv)
-            tv.setSelectedRange(NSRange(location: (tv.string as NSString).length, length: 0))
+        if autoFocus {
+            RunLoop.main.perform {
+                tv.window?.makeFirstResponder(tv)
+                tv.setSelectedRange(NSRange(location: (tv.string as NSString).length, length: 0))
+            }
         }
         return scroll
     }
@@ -341,6 +343,7 @@ struct MarkdownTextView: NSViewRepresentable {
         context.coordinator.parent = self
         guard let tv = scroll.documentView as? MarkdownNSTextView else { return }
         tv.onDone = onDone
+        tv.onFocus = onFocus
         proxy.textView = tv
         if tv.string != text, !tv.hasMarkedText() {
             tv.string = text

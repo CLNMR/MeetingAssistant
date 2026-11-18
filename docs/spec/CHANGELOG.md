@@ -10,6 +10,10 @@ What changed for the user, in one to three sentences.
 Sections: 01-recording (Live transcription), 03-assist-ui (Review)
 ```
 
+## 2026-11-18: Recap fields edit on click; saving works when a team member is outside the workspace
+Markdown recap fields are always an editor: a click puts the cursor where it lands; the formatting bar shows while the field has the focus (no preview/edit switch). Saving the recap no longer fails with "member … is not part of this workspace": such team members are left out of the participants, the save is repeated, and the result says who was not added.
+Sections: 03-assist-ui (8.2 Markdown field), 02-assist-core (7.5 Upload: members outside the meetings' workspace)
+
 ## 2026-11-18: Every meeting gets its recap; speaker names reach the recap
 A meeting stopped while its final transcript was still being made now gets its recap drafted when the transcript is ready, even after opening another meeting, pressing Done or starting a new meeting (before, the wait was cancelled). Naming a speaker now always reaches the recap: also while Claude is still writing it, when renaming or merging in Scribe, when merging speakers, and when the recap says "Sprecher 2" or "speaker 2".
 Sections: 03-assist-ui (8. Open review, Wait-then-draft, Speaker names in the recap; 8.1 Rename), 02-assist-core (Speaker names: replacing, renames, applying)

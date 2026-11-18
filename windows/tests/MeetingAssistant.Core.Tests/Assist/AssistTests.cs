@@ -306,6 +306,14 @@ public class MeetingTargetTests
     }
 
     [Fact]
+    public void RejectedParticipantsAreReadFromAyasError()
+    {
+        const string m = "participants: member 01aaaaaaaaaaaaaaaaaaaaaaaa is not part of this workspace; member 01bbbbbbbbbbbbbbbbbbbbbbbb is not part of this workspace";
+        Assert.Equal(new[] { "01aaaaaaaaaaaaaaaaaaaaaaaa", "01bbbbbbbbbbbbbbbbbbbbbbbb" }, RecapBuilder.RejectedMemberIDs(m));
+        Assert.Empty(RecapBuilder.RejectedMemberIDs("title: required"));
+    }
+
+    [Fact]
     public void MembersMatchByFullOrUniqueFirstName()
     {
         var members = new List<AyaRecord>

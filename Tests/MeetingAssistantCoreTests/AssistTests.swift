@@ -597,4 +597,10 @@ import Testing
         #expect(AyaWebLink.url(workspace: "WS1", recordType: "pmMeetings", record: "")?.absoluteString.hasSuffix("/list/pmMeetings/") == true)
         #expect(AyaWebLink.url(workspace: "", recordType: "x") == nil)
     }
+
+    @Test func rejectedParticipantsAreReadFromAyasError() {
+        let m = "participants: member 01aaaaaaaaaaaaaaaaaaaaaaaa is not part of this workspace; member 01bbbbbbbbbbbbbbbbbbbbbbbb is not part of this workspace"
+        #expect(RecapBuilder.rejectedMemberIDs(m) == ["01aaaaaaaaaaaaaaaaaaaaaaaa", "01bbbbbbbbbbbbbbbbbbbbbbbb"])
+        #expect(RecapBuilder.rejectedMemberIDs("title: required").isEmpty)
+    }
 }

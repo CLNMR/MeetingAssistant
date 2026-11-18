@@ -4,7 +4,7 @@ The `port-to-windows` skill keeps this file up to date.
 
 | | |
 |---|---|
-| Last ported changelog entry | 2026-11-18: Every meeting gets its recap; speaker names reach the recap |
+| Last ported changelog entry | 2026-11-18: Recap fields edit on click; saving works when a team member is outside the workspace |
 | Spec commit ported from | uncommitted spec changes of 2026-11-18 (after 29296dd) |
 | Last run | 2026-11-18 |
 
@@ -48,6 +48,10 @@ The Windows side of "Installable releases" was built together with the Mac side:
 
 Built on the Windows side only (no Mac change): `SpeechAcceleration` (Speech: probe output parsing, provider and threads, status line, cache fingerprint; with tests), `SpeechEngine.ProviderSource` and `RunGpuProbe`, `SpeechGpu` and `AppLog` (App: child process, cache, registry adapters), the `-gpuProbe` start argument, the Settings › Models switch and status, `speechOnGpu` in the preferences, `windows/native/build-directml.ps1` and the DirectML steps of the release workflow. Checked on the Mac: build, tests, and that the NuGet sherpa-onnx library prints `DirectML is for Windows only. Fallback to cpu!` to stderr for provider `directml` and keeps working on the CPU.
 
+## 2026-11-18: recap fields edit on click; members outside the workspace
+
+`MarkdownField` is always the AvalonEdit editor (the WPF preview is gone): the formatting bar and the `primary` border show while the keyboard focus is inside the field (or the heading menu is open); toolbar buttons and Done are not focusable, so a click keeps the editor's focus and selection; Done and Esc clear the keyboard focus; "Empty. Click to write." overlays an empty unfocused field; 44–420 px. Core: `RecapBuilder.RejectedMemberIDs` and the retry loop in `AssistReviewController.UploadRecapAsync` (ids remembered per workspace for the app run, note in the StepLine), with tests (parser; a save refused once for a member, then saved without him, and a second save leaving him out right away).
+
 ## Open items
 
 Not yet run on Windows (needs a Windows machine):
@@ -63,7 +67,7 @@ Not yet run on Windows (needs a Windows machine):
 - Meeting shortcut Ctrl+Alt+Win+R: start and stop in Scribe and in Assist (also from a Review), the app coming to the front from the tray or minimised, Start not opening when Win is released, the conflict error, and recording a new shortcut in Settings › General.
 - Saved-to-Aya badge (Cloud glyph U+E753 in Segoe Fluent Icons/MDL2) in both lists, and the sidebar title changing after a draft and an upload.
 - The checklist answer under the item in the live Checklist panel (selectable, wraps), and the floating window labelling recorded lines with names given in Assist.
-- Markdown field: preview layout (lists, tables, checkboxes with Segoe Fluent glyphs), switching modes, the toolbar glyphs, heading sizes and fonts in the AvalonEdit highlighting, the editor growing from 90 to 420 px, Enter/Tab/Shift+Tab/Ctrl+B/Ctrl+I/Esc, undo, typing with an IME, and that the review autosave still fires while typing.
+- Markdown field: the click putting the cursor where it lands, the toolbar appearing and hiding with the focus (also around the heading menu), Done/Esc clearing the focus (and window shortcuts still working afterwards), the placeholder position, the toolbar glyphs, heading sizes and fonts in the AvalonEdit highlighting, the editor growing from 44 to 420 px, Enter/Tab/Shift+Tab/Ctrl+B/Ctrl+I/Esc, undo, typing with an IME, and that the review autosave still fires while typing.
 
 Known differences, by design or for now:
 - The catch-up language is guessed from lists of common words of nine languages instead of a trained recognizer; short or mixed windows fall back to "the language of the transcript".

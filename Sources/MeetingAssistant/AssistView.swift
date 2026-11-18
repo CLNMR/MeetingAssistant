@@ -1502,7 +1502,7 @@ enum AssistSnapshots {
         render(AssistSettingsView(assist: a), app: app, size: CGSize(width: 620, height: 900), to: dir.appendingPathComponent("5-settings.png"), wait: 1.5)
     }
 
-    /// The Markdown field of the recap, as preview and as editor (`-markdownSnapshot <dir>`).
+    /// The Markdown field of the recap, unfocused, focused and empty (`-markdownSnapshot <dir>`).
     static func runMarkdown(app: AppState, dir: URL) {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let sample = """

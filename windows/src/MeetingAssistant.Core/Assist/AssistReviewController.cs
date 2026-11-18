@@ -78,6 +78,9 @@ public sealed class AssistReviewController : ObservableObject
     readonly Dictionary<string, HashSet<ReviewJob>> _jobs = new();
     /// CRM proposals that finished while another meeting was open (not saved to disk).
     readonly Dictionary<string, CRMProposal> _pendingCrm = new();
+    /// Per Aya workspace: team members Aya refused as meeting participants in this app run (not in that
+    /// workspace), so later saves leave them out right away (spec 02 §7.5).
+    readonly Dictionary<string, HashSet<string>> _nonWorkspaceMembers = new();
 
     /// <summary>True while <paramref name="job"/> runs for meeting <paramref name="id"/>.</summary>
     public bool IsRunning(string id, ReviewJob job) { lock (_jobs) return _jobs.TryGetValue(id, out var j) && j.Contains(job); }
@@ -475,25 +478,40 @@ public sealed class AssistReviewController : ObservableObject
         var target = TargetMeetingID;
         var started = _host.Session(id)?.StartedAt ?? rec.Context.Date;
         var people = new[] { rec.Context.MyName }.Concat(rec.State.Attendees.Where(a => a.Present != false).Select(a => a.Name));
-        var memberIDs = RecapBuilder.MemberIDs(people, _aya.Members);
+        var members = _aya.Members;
+        var allMembers = RecapBuilder.MemberIDs(people, members);
+        var skipBefore = _nonWorkspaceMembers.TryGetValue(r.WorkspaceId, out var known) ? known.ToHashSet() : new HashSet<string>();
+        var memberIDs = allMembers.Where(m => !skipBefore.Contains(m)).ToList();
         RecapState = new StepState.Working("Saving in Aya…");
         string? written = null;
         try
         {
-            AyaRecord saved;
-            if (target is not null)
+            var current = target is not null ? await svc.RecordAsync(AyaSlot.Meetings, target) : null;
+            var skipped = new List<string>();
+            AyaRecord? saved = null;
+            while (saved is null)
             {
-                var current = await svc.RecordAsync(AyaSlot.Meetings, target);
                 var values = RecapBuilder.RecapValues(fields, rec, id, started, schema, _aya.Config, current, memberIDs, tables);
                 written = Written(values);
-                saved = await svc.Client.UpdateAsync(r.WorkspaceId, r.TechName, target, values);
+                try
+                {
+                    saved = target is not null
+                        ? await svc.Client.UpdateAsync(r.WorkspaceId, r.TechName, target, values)
+                        : await svc.Client.CreateAsync(r.WorkspaceId, r.TechName, values);
+                }
+                catch (AyaException e) when (e.Kind == AyaErrorKind.BadRequest)
+                {
+                    // A team member who is not in the meetings' workspace: save again without them.
+                    var rejected = RecapBuilder.RejectedMemberIDs(e.Detail).Where(memberIDs.Contains).ToList();
+                    if (rejected.Count == 0) throw;
+                    memberIDs.RemoveAll(rejected.Contains);
+                    skipped.AddRange(rejected);
+                    if (!_nonWorkspaceMembers.TryGetValue(r.WorkspaceId, out var set)) _nonWorkspaceMembers[r.WorkspaceId] = set = new();
+                    set.UnionWith(rejected);
+                }
             }
-            else
-            {
-                var values = RecapBuilder.RecapValues(fields, rec, id, started, schema, _aya.Config, null, memberIDs, tables);
-                written = Written(values);
-                saved = await svc.Client.CreateAsync(r.WorkspaceId, r.TechName, values);
-            }
+            var skippedNames = skipped.Concat(allMembers.Where(skipBefore.Contains))
+                .Select(mid => members.FirstOrDefault(m => m.Id == mid)?.Title ?? mid).ToList();
             UpdateRecord(id, x =>
             {
                 x.RecapRecordID = saved.Id;
@@ -507,7 +525,9 @@ public sealed class AssistReviewController : ObservableObject
             {
                 TargetMeetingID = saved.Id;
                 TargetRecord = saved;
-                RecapState = new StepState.Done($"Saved in Aya: “{saved.Title}” ({r.Label}).");
+                var note = skippedNames.Count == 0 ? ""
+                    : $" Not added as {(skippedNames.Count == 1 ? "participant" : "participants")} because Aya says they are not members of the meetings' workspace: {string.Join(", ", skippedNames)}.";
+                RecapState = new StepState.Done($"Saved in Aya: “{saved.Title}” ({r.Label}).{note}");
             }
         }
         catch (Exception e) when (e is AyaException or IOException)

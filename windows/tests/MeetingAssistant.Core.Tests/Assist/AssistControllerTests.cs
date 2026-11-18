@@ -392,6 +392,58 @@ public class AssistReviewControllerTests
         Assert.Equal("Template: 1 of 2 points covered · missing: Budget", review.ChecklistLine);
         review.Finish();
     }
+
+    [Fact]
+    public async Task SavingLeavesOutMembersOutsideTheWorkspaceAndSaysWho()
+    {
+        using var home = new TempHome();
+        const string outside = "01bbbbbbbbbbbbbbbbbbbbbbbb";
+        var posts = new List<string>();   // bodies of POST and PUT
+        var handler = new Aya.FakeHandler((req, _) =>
+        {
+            if (req.Method == HttpMethod.Get)
+                return Aya.FakeHandler.Json(req.RequestUri!.AbsolutePath.EndsWith("/R1") ? """{"id":"R1","computedTitle":"Kickoff MUSTER SOLAR"}""" : "[]");
+            var body = req.Content!.ReadAsStringAsync().Result;
+            posts.Add(body);
+            return body.Contains(outside)
+                ? Aya.FakeHandler.Json($$"""{"error":"participants: member {{outside}} is not part of this workspace"}""", System.Net.HttpStatusCode.BadRequest)
+                : Aya.FakeHandler.Json("""{"id":"R1","computedTitle":"Kickoff MUSTER SOLAR"}""");
+        });
+        var prefs = new MemoryPreferences();
+        var cfg = new AyaConfig { OrgId = "ORG" };
+        cfg.SetList(AyaSlot.Meetings, new AyaListRef("W", "WS", "pmMeetings", "Meetings"));
+        cfg.Save(prefs);
+        var secrets = new MemorySecretStore();
+        AyaConfig.SetApiKey(secrets, "KEY");
+        var aya = new AssistConnection(secrets, prefs, () => handler);
+        Connect(aya);
+        typeof(AssistConnection).GetProperty(nameof(AssistConnection.Members))!.SetValue(aya, new List<AyaRecord>
+        {
+            Rec(("id", "01aaaaaaaaaaaaaaaaaaaaaaaa"), ("computedTitle", "Erika Musterfrau")),
+            Rec(("id", outside), ("computedTitle", "Max Beispiel")),
+        });
+        var host = new FakeHost();
+        var review = new AssistReviewController(host, aya, new FakeRecapClaude());
+        Session(host, "S1", SessionStatus.Done);
+        var rec = Record();
+        rec.Context.MyName = "Erika Musterfrau";
+        rec.State.Attendees.Add(new Attendee { Name = "Max Beispiel", Present = true });
+        rec.RecapDraft = Fields();
+        rec.Save("S1");
+        Assert.True(review.Open("S1"));
+
+        await review.UploadRecapAsync();
+        Assert.Equal(2, posts.Count);                                     // refused once, then saved without him
+        Assert.DoesNotContain(outside, posts[1]);
+        Assert.Contains("01aaaaaaaaaaaaaaaaaaaaaaaa", posts[1]);
+        var done = Assert.IsType<StepState.Done>(review.RecapState);
+        Assert.Equal("Saved in Aya: “Kickoff MUSTER SOLAR” (Meetings). Not added as participant because Aya says they are not members of the meetings' workspace: Max Beispiel.", done.Message);
+
+        await review.UploadRecapAsync();                                   // saved again (PUT): left out right away
+        Assert.Equal(3, posts.Count);
+        Assert.DoesNotContain(outside, posts[2]);
+        Assert.EndsWith("workspace: Max Beispiel.", Assert.IsType<StepState.Done>(review.RecapState).Message);
+    }
 }
 
 public class AssistControllerRulesTests

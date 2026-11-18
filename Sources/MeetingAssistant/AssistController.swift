@@ -110,6 +110,9 @@ final class AssistController: ObservableObject {
     /// result to the meeting it started for, so switching meetings meanwhile never mixes them up.
     @Published private(set) var reviewJobs: [String: Set<ReviewJob>] = [:]
     enum ReviewJob: Hashable { case recap, tables, crm, upload, applyCRM }
+    /// Per Aya workspace: team members Aya refused as meeting participants in this app run (not in that
+    /// workspace), so later saves leave them out right away.
+    private var nonWorkspaceMembers: [String: Set<String>] = [:]
     /// CRM proposals that finished while another meeting was open (they are not saved to disk).
     private var pendingCRM: [String: CRMProposal] = [:]
 
@@ -687,25 +690,39 @@ final class AssistController: ObservableObject {
         let fields = recapFields, tables = reviewTables, target = targetMeetingID
         let started = app.sessions.first { $0.id == id }?.startedAt ?? rec.context.date
         let people = [rec.context.myName] + rec.state.attendees.filter { $0.present != false }.map(\.name)
-        let memberIDs = RecapBuilder.memberIDs(attendees: people, members: members)
+        let skipBefore = nonWorkspaceMembers[ref.workspaceId] ?? []
+        var memberIDs = RecapBuilder.memberIDs(attendees: people, members: members).filter { !skipBefore.contains($0) }
         begin(.upload, id)
         defer { end(.upload, id) }
         recapState = .working("Saving in Aya…")
         var written: String?
         do {
-            let saved: AyaRecord
-            if let target {
-                let current = try await svc.record(.meetings, id: target)
+            var current: AyaRecord?
+            if let target { current = try await svc.record(.meetings, id: target) }
+            var skipped: [String] = []
+            var saved: AyaRecord?
+            while saved == nil {
                 let values = RecapBuilder.recapValues(fields, record: rec, sessionID: id, startedAt: started, schema: schema,
                                                       config: config, existing: current, memberIDs: memberIDs, tables: tables)
                 written = values[config.meetingTitleField]?.string
-                saved = try await svc.client.update(workspace: ref.workspaceId, list: ref.techName, id: target, values: values)
-            } else {
-                let values = RecapBuilder.recapValues(fields, record: rec, sessionID: id, startedAt: started, schema: schema,
-                                                      config: config, memberIDs: memberIDs, tables: tables)
-                written = values[config.meetingTitleField]?.string
-                saved = try await svc.client.create(workspace: ref.workspaceId, list: ref.techName, values: values)
+                do {
+                    if let target {
+                        saved = try await svc.client.update(workspace: ref.workspaceId, list: ref.techName, id: target, values: values)
+                    } else {
+                        saved = try await svc.client.create(workspace: ref.workspaceId, list: ref.techName, values: values)
+                    }
+                } catch AyaError.badRequest(let m) {
+                    // A team member who is not in the meetings' workspace: save again without them.
+                    let rejected = RecapBuilder.rejectedMemberIDs(m).filter(memberIDs.contains)
+                    guard !rejected.isEmpty else { throw AyaError.badRequest(m) }
+                    memberIDs.removeAll(where: rejected.contains)
+                    skipped += rejected
+                    nonWorkspaceMembers[ref.workspaceId, default: []].formUnion(rejected)
+                }
             }
+            guard let saved else { return }
+            let skippedNames = (skipped + RecapBuilder.memberIDs(attendees: people, members: members).filter(skipBefore.contains))
+                .map { mid in members.first { $0.id == mid }?.title ?? mid }
             updateRecord(id) {
                 $0.recapRecordID = saved.id
                 $0.recapUploadedAt = Date()
@@ -717,7 +734,8 @@ final class AssistController: ObservableObject {
             if isOpen(id) {
                 targetMeetingID = saved.id
                 targetRecord = saved
-                recapState = .done("Saved in Aya: “\(saved.title)” (\(ref.label)).")
+                let note = skippedNames.isEmpty ? "" : " Not added as \(skippedNames.count == 1 ? "participant" : "participants") because Aya says they are not members of the meetings' workspace: \(skippedNames.joined(separator: ", "))."
+                recapState = .done("Saved in Aya: “\(saved.title)” (\(ref.label)).\(note)")
             }
         } catch {
             if isOpen(id) { recapState = .failed(error.localizedDescription) }

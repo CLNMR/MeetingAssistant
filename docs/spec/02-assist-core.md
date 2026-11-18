@@ -715,6 +715,7 @@ For markdown fields the description is `"<label> (markdown)"`.
 **Upload:**
 - **With a target meeting:** GET the current record, compute the values with `existing`, then PUT (partial update). `recapRecordID = target`.
 - **Without one:** POST a new record to the meetings list. `recapRecordID` = the new id, which also becomes the target, so saving again updates the same meeting.
+- **Members outside the meetings' workspace:** the team-member list comes from the organisation, but Aya only accepts participants who are members of the meeting list's workspace. When the PUT/POST fails with a 400 whose message contains `member <id> is not part of this workspace` (any number of times) and those ids are among the team-member ids sent, they are removed and the request is sent again (repeat until it succeeds or fails otherwise; any other 400 is shown as before). The ids are remembered per workspace for the rest of the app run, so later saves leave them out right away. After success the recap StepLine adds: ` Not added as participant(s) because Aya says they are not members of the meetings' workspace: <names>.` (member titles, else ids), also for members left out because they were remembered.
 - Afterwards `recapUploadedAt = now`, and `assist.json` is saved.
 
 The target can be the planned meeting, any meeting from the same day (for example one a call bot created), or "new". The target choices are the current target record plus the day's meetings, without duplicates.
